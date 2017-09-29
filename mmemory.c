@@ -27,7 +27,7 @@ typedef struct
 {
 	Segment segment;
 	void* pAddress;
-	bool bPresent;
+	bool bIsPresent;
 
 } SegmentRecord;
 
@@ -36,13 +36,27 @@ typedef struct
 	SegmentRecord* pFirstRecord;
 	int nSize;
 
+	//Segment* pSegmentListHead;
+
 } SegmentTable;
 
 ///////////////////////////////////////////////////////////////////////////////
 
-
 #define VAS_SIZE (1000 * 1024 * 1024) // MB
 #define SEG_TABLE_SIZE(MAX_SEGMENTS) (sizeof(SegmentTable) + sizeof(SegmentRecord) * MAX_SEGMENTS)
+
+// number of bytes in VA reserved for segment index and offset
+#define SEG_INDEX_BYTES 2
+#define SEG_OFFSET_BYTES (sizeof(VA) - SEG_INDEX_BYTES)
+
+#define GET_VA_SEG_INDEX(va)          (va >> (8 * SEG_OFFSET_BYTES))
+#define GET_VA_SEG_OFFSET(va)         (va & ((1L << (8 * SEG_OFFSET_BYTES)) - 1))
+
+#define SET_VA_SEG_INDEX(va, index)   (va = GET_VA_SEG_OFFSET(va) | (index << (8 * SEG_OFFSET_BYTES)))
+#define SET_VA_SEG_OFFSET(va, offset) (va = ((GET_VA_SEG_INDEX(va) << (8 * SEG_OFFSET_BYTES)) | offset))
+
+// handles signed negative integers
+// #define GET_VA_SEG_INDEX(va) ((va >> (8 * SEG_OFFSET_BYTES)) & ((0xffL << ((SEG_INDEX_BYTES + 1)*8)) - 1)) 
 
 // globals
 
@@ -53,7 +67,6 @@ const VA g_vaLastAvailable = NULL + VAS_SIZE / sizeof(VA) - 1;
 
 SegmentTable* g_pSegmentTable;
 int g_nMaxSegments;
-long g_nMemoryReservedForTable;
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -65,7 +78,7 @@ SegmentRecord* insert_new_record_into_table(VA vaSegmentAddress, size_t nSegment
 
 	SegmentRecord tmpRecord;
 	tmpRecord.pAddress = NULL;
-	tmpRecord.bPresent = false;
+	tmpRecord.bIsPresent = false;
 	tmpRecord.segment.vaStartAddress = vaSegmentAddress;
 	tmpRecord.segment.nSize = nSegmentSize;
 	tmpRecord.segment.pNextSegment = NULL;
