@@ -1,9 +1,13 @@
 #include <stdlib.h>
-#include "mmemory.h"
 #include <stdio.h>
+
+#include "logger.h"
+#include "mmemory.h"
 
 int main()
 {
-    printf("%d\n", m_init(10, 10));
+    INIT_LOGGER("log.txt");
+
+    TERMINATE_LOGGER;
     return 0;
 }

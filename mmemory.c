@@ -10,7 +10,9 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+
 #include "mmemory.h"
+#include "logger.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Struct definitions
