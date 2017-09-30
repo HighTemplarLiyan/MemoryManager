@@ -16,6 +16,8 @@
 // Struct definitions
 ///////////////////////////////////////////////////////////////////////////////
 
+typedef char* PA;
+
 struct Segment
 {
 	long nSize;
@@ -28,7 +30,7 @@ typedef struct Segment Segment;
 typedef struct
 {
 	Segment segment;
-	void* paAddress;
+	PA paAddress;
 	bool bIsPresent;
 
 } SegmentRecord;
@@ -43,7 +45,9 @@ typedef struct
 } SegmentTable;
 
 ///////////////////////////////////////////////////////////////////////////////
+
 #define LONG(x) ((long)(x))
+#define VOID(x) ((void*)(x))
 
 // number of bytes in VA reserved for segment index and offset
 #define SEG_INDEX_BYTES 2
@@ -66,7 +70,7 @@ typedef struct
 // Globals
 ///////////////////////////////////////////////////////////////////////////////
 
-void* g_paStartAddress;
+PA g_paStartAddress;
 
 size_t g_nCurrentVasSize = 0;
 
@@ -75,14 +79,14 @@ int g_nMaxSegments;
 
 ///////////////////////////////////////////////////////////////////////////////
 
-Segment* initialize_free_segment(void* paStartAddress, size_t nSize, Segment* pNextSegment)
+Segment* initialize_free_segment(PA paStartAddress, size_t nSize, Segment* pNextSegment)
 {
 	Segment freeSegment;
 	freeSegment.nSize = nSize - sizeof(Segment);
 	freeSegment.bIsFree = true;
 	freeSegment.pNextSegment = pNextSegment;
 
-	memcpy(paStartAddress, (void*)&freeSegment, sizeof(Segment));
+	memcpy(VOID(paStartAddress), VOID(&freeSegment), sizeof(Segment));
 
 	return (Segment*)paStartAddress;
 }
@@ -106,7 +110,7 @@ bool place_segment_into_memory(SegmentRecord* pRecord)
 			size_t nMemoryLeft = pSegment->nSize - pSegmentToPlace->nSize;
 			if (nMemoryLeft > 0)
 			{
-				void* paNextSegment = (void*)((char*)(pSegment + 1) + pSegment->nSize);
+				PA paNextSegment = (char*)(pSegment + 1) + pSegment->nSize;
 
 				Segment* pNewFreeSegment = initialize_free_segment(paNextSegment, nMemoryLeft, pNextSegment);
 				pSegmentToPlace->pNextSegment = pNewFreeSegment;
@@ -127,17 +131,17 @@ bool place_segment_into_memory(SegmentRecord* pRecord)
 			// TODO: bIsPresent assert
 			// TODO: move to separate function
 			if (pRecord->paAddress)
-				memcpy((void*)pSegment, pRecord->paAddress, pSegmentToPlace->nSize);
+				memcpy(VOID(pSegment), VOID(pRecord->paAddress), pSegmentToPlace->nSize);
 			else
-				memset((void*)pSegment, 0, pSegmentToPlace->nSize);
-			pRecord->paAddress = (void*)pSegment;
+				memset(VOID(pSegment), 0, pSegmentToPlace->nSize);
+			pRecord->paAddress = (PA)pSegment;
 			pRecord->bIsPresent = true;
 			
 			return true;
 		}
 
 		pPreviousSegment = pSegment;
-		pSegment = pSegment->pNextSegment;
+		pSegment = pNextSegment;
 	}
 
 	return false;
@@ -160,7 +164,7 @@ VA insert_new_record_into_table(size_t nSegmentSize)
 	tmpRecord.segment.nSize = nSegmentSize;
 	tmpRecord.segment.pNextSegment = NULL;
 
-	memcpy((void*)pNewRecord, (void*)&tmpRecord, sizeof(SegmentRecord));
+	memcpy(VOID(pNewRecord), VOID(&tmpRecord), sizeof(SegmentRecord));
 
 	g_pSegmentTable->nSize++;
 
@@ -212,7 +216,6 @@ int m_init(int n, int szPage)
 		return 1;
 
 	g_pSegmentTable = (SegmentTable*)g_paStartAddress;
-	// TODO: void pointer arithmetic is illegal
 	g_paStartAddress = g_paStartAddress + SEG_TABLE_SIZE(g_nMaxSegments);
 
 	// init segment table
@@ -220,7 +223,7 @@ int m_init(int n, int szPage)
 	tmpTable.pFirstRecord = (SegmentRecord*)(g_pSegmentTable + 1);
 	tmpTable.nSize = 0;
 	tmpTable.pSegmentListHead = initialize_free_segment(g_paStartAddress, nTotalMemory, NULL);
-	memcpy((void*)g_pSegmentTable, (void*)&tmpTable, sizeof(SegmentTable));
+	memcpy(VOID(g_pSegmentTable), VOID(&tmpTable), sizeof(SegmentTable));
 
 	return 0;
 }
