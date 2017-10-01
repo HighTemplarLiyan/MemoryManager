@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <signal.h>
+#include <assert.h>
 
 #include "mmemory.h"
 #include "logger.h"
@@ -217,6 +219,12 @@ int m_write(VA ptr, void* pBuffer, size_t szBuffer)
 
 int m_init(int n, int szPage)
 {
+#ifndef NO_LOG
+	const int signals[] = {SIGINT, SIGILL, SIGABRT, SIGFPE, SIGSEGV, SIGTERM};
+	for (size_t i = 0; i < 6; ++i)
+		assert(signal(signals[i], terminate_logger) != SIG_ERR);
+#endif
+
 	LOG("Initializing memory manager");
 	// TODO: check max number of segments and their size
 	if (n <= 0 || szPage <= 0)

@@ -32,10 +32,13 @@ int init_logger(const char* sFileName)
     }
 }
 
-void terminate_logger()
+void terminate_logger(int sig)
 {
     log_str("===================================================");
-    log_msg("===== Logger terminated =====");
+    if (!sig)
+        log_msg("===== Logger terminated =====");
+    else
+        log_msg("===== Logger terminated due to signal raise =====");
     log_str("===================================================");
     fclose(pLogFile);
 }

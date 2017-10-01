@@ -4,7 +4,7 @@
 
 #ifndef NO_LOG
     #define INIT_LOGGER(file) init_logger(file)
-    #define TERMINATE_LOGGER terminate_logger()
+    #define TERMINATE_LOGGER(sig) terminate_logger(sig)
 
     #define LOG(str) log_msg(str)
     #define LOG_INT(str, value) log_msg_int(str, value)
@@ -21,7 +21,7 @@
 #endif
 
 int init_logger(const char* sFileName);
-void terminate_logger();
+void terminate_logger(int sig);
 
 void log_msg(char* str);
 void log_str(char* str);

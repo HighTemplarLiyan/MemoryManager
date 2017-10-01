@@ -8,6 +8,6 @@ int main()
 {
     INIT_LOGGER("log.txt");
 
-    TERMINATE_LOGGER;
+    TERMINATE_LOGGER(0);
     return 0;
 }
