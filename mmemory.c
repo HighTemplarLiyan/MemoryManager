@@ -84,11 +84,15 @@ int g_nMaxSegments;
 Segment* initialize_free_segment(PA paStartAddress, size_t nSize, Segment* pNextSegment)
 {
 	Segment freeSegment;
-	freeSegment.nSize = nSize - sizeof(Segment);
+	freeSegment.nSize = nSize;
 	freeSegment.bIsFree = true;
 	freeSegment.pNextSegment = pNextSegment;
 
 	memcpy(VOID(paStartAddress), VOID(&freeSegment), sizeof(Segment));
+	
+
+	LOG_ADDR("Free memory segment is initialized with the address:", LONG(paStartAddress));
+	LOG_INT("			and size:", LONG(nSize));
 
 	return (Segment*)paStartAddress;
 }
@@ -108,11 +112,12 @@ bool place_segment_into_memory(SegmentRecord* pRecord)
 		// TODO: choose memory management algorithm: best fit, first fit, etc.
 		if (pSegment->bIsFree && pSegment->nSize >= pSegmentToPlace->nSize)
 		{
+			LOG_ADDR("Found free segment with address:", pSegment);
 			// initialize free segment in the rest of the memory
 			size_t nMemoryLeft = pSegment->nSize - pSegmentToPlace->nSize;
 			if (nMemoryLeft > 0)
 			{
-				PA paNextSegment = (char*)(pSegment + 1) + pSegment->nSize;
+				PA paNextSegment = (char*)pSegment + pSegmentToPlace->nSize;
 
 				Segment* pNewFreeSegment = initialize_free_segment(paNextSegment, nMemoryLeft, pNextSegment);
 				pSegmentToPlace->pNextSegment = pNewFreeSegment;
@@ -164,9 +169,14 @@ VA insert_new_record_into_table(size_t nSegmentSize)
 	tmpRecord.paAddress = NULL;
 	tmpRecord.bIsPresent = false;
 	tmpRecord.segment.nSize = nSegmentSize;
+	tmpRecord.segment.bIsFree = false;
 	tmpRecord.segment.pNextSegment = NULL;
 
 	memcpy(VOID(pNewRecord), VOID(&tmpRecord), sizeof(SegmentRecord));
+
+	LOG_INT("SegmentRecord No.", nTableSize);
+	LOG_ADDR("    is loaded into memory address:", pNewRecord);
+	LOG_ADDR("    segment VA:", vaNewSegmentAddress);
 
 	g_pSegmentTable->nSize++;
 
@@ -175,6 +185,7 @@ VA insert_new_record_into_table(size_t nSegmentSize)
 
 int m_malloc(VA* ptr, size_t szBlock)
 {
+	LOG_INT("Initializing memory segment of size:", szBlock);
 	// TODO: check max block size
 	if (szBlock < 0)
 		return -1;
@@ -183,7 +194,8 @@ int m_malloc(VA* ptr, size_t szBlock)
 		return -2;
 
 	*ptr = insert_new_record_into_table(szBlock);
-	place_segment_into_memory(&g_pSegmentTable->pFirstRecord[GET_VA_SEG_INDEX(ptr)]);
+	LOG_INT("Loading into memory segment No.", GET_VA_SEG_INDEX(*ptr));
+	place_segment_into_memory(&g_pSegmentTable->pFirstRecord[GET_VA_SEG_INDEX(*ptr)]);
 
 	return 0;
 }
@@ -205,6 +217,7 @@ int m_write(VA ptr, void* pBuffer, size_t szBuffer)
 
 int m_init(int n, int szPage)
 {
+	LOG("Initializing memory manager");
 	// TODO: check max number of segments and their size
 	if (n <= 0 || szPage <= 0)
 		return -1;
@@ -213,18 +226,22 @@ int m_init(int n, int szPage)
 	g_nMaxSegments = n;
 	long nTotalMemory = n * szPage;
 
+	LOG_LONG("Allocating physical memory (bytes):", nTotalMemory);
 	g_paStartAddress = malloc(nTotalMemory);
 	if (!g_paStartAddress)
 		return 1;
 
 	g_pSegmentTable = (SegmentTable*)g_paStartAddress;
+	LOG_ADDR("SegmentTable physical address:", g_paStartAddress);
+	LOG_INT("SegmentTable size:", SEG_TABLE_SIZE(g_nMaxSegments));
 	g_paStartAddress = g_paStartAddress + SEG_TABLE_SIZE(g_nMaxSegments);
+	LOG_ADDR("Initial physical address:", g_paStartAddress);
 
 	// init segment table
 	SegmentTable tmpTable;
 	tmpTable.pFirstRecord = (SegmentRecord*)(g_pSegmentTable + 1);
 	tmpTable.nSize = 0;
-	tmpTable.pSegmentListHead = initialize_free_segment(g_paStartAddress, nTotalMemory, NULL);
+	tmpTable.pSegmentListHead = initialize_free_segment(g_paStartAddress, nTotalMemory - SEG_TABLE_SIZE(g_nMaxSegments), NULL);
 	memcpy(VOID(g_pSegmentTable), VOID(&tmpTable), sizeof(SegmentTable));
 
 	return 0;

@@ -25,15 +25,24 @@ int init_logger(const char* sFileName)
     }
     else
     {
+        log_str("===================================================");
         log_msg("===== Logger initialized =====");
+        log_str("===================================================");
         return 1;
     }
 }
 
 void terminate_logger()
 {
+    log_str("===================================================");
     log_msg("===== Logger terminated =====");
+    log_str("===================================================");
     fclose(pLogFile);
+}
+
+void log_str(char* str)
+{
+    fprintf(pLogFile, "%s\n", str);
 }
 
 void log_msg(char* str)
@@ -61,5 +70,6 @@ void log_msg_addr(char* str, long addr)
 {
     char t[20];
     get_time(t);
+    // TODO: add preceding zeros
     fprintf(pLogFile, "%s: %s %#lx\n", t, str, addr);
 }

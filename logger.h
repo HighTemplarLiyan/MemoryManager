@@ -13,7 +13,7 @@
 #else
     #define INIT_LOGGER(file) file
     #define TERMINATE_LOGGER
-    
+
     #define LOG(str) str
     #define LOG_INT(str, value) str, value
     #define LOG_LONG(str, value) str, value
@@ -24,6 +24,7 @@ int init_logger(const char* sFileName);
 void terminate_logger();
 
 void log_msg(char* str);
+void log_str(char* str);
 void log_msg_int(char* str, int value);
 void log_msg_long(char* str, long value);
 void log_msg_addr(char* str, long addr);
