@@ -116,18 +116,21 @@ Segment* unload_segment(SegmentRecord* pRecord)
 	if (!pDiskMemory)
 		LOG("Error! Can't allocate disk memory for segment");
 
-	// copy segment content to disk memory
-	memcpy(pDiskMemory, pRecord->paAddress, pSegmentToUnload->nSize);
-
-	// replace segment in memory with free segment
 	Segment* pFreeSegment = NULL;
 	if (pRecord->paAddress)
+	{
+		// copy segment content to disk memory
+		memcpy(pDiskMemory, pRecord->paAddress, pSegmentToUnload->nSize);
+		// replace segment in memory with free segment
 		pFreeSegment = initialize_free_segment(pRecord->paAddress, pSegmentToUnload->nSize, pSegmentToUnload->pNextSegment);
+	}
 
 	// update record state
 	pRecord->paAddress = pDiskMemory;
 	pRecord->bIsPresent = false;
 	pSegmentToUnload->pNextSegment = NULL;
+
+	LOG("Segment successfully unloaded");
 
 	return pFreeSegment;
 }
@@ -138,6 +141,11 @@ Segment* find_free_place_for_segment(size_t nSize, bool bForce)
 	Segment* pSegment = g_pSegmentTable->pSegmentListHead;
 	while (pSegment)
 	{
+		LOG("    found segment:");
+		LOG_ADDR("        address:", LONG(pSegment));
+		LOG_INT("        size:", pSegment->nSize);
+		LOG_INT("        free:", pSegment->bIsFree);
+
 		// TODO: choose memory management algorithm: best fit, first fit, etc.
 		if (pSegment->bIsFree && pSegment->nSize >= nSize)
 		{
@@ -152,8 +160,15 @@ Segment* find_free_place_for_segment(size_t nSize, bool bForce)
 	if (bForce)
 	{
 		const int nTableSize = g_pSegmentTable->nSize;
-		// TODO: implement more sophisticated algorithm
-		const int nSegmentToUnload = nTableSize ? rand() % nTableSize : 0;
+		
+		// TODO: implement more sophisticated and effective algorithm
+		int nSegmentToUnload;
+		while (true)
+		{
+			nSegmentToUnload = nTableSize > 0 ? rand() % nTableSize : 0;
+			if (g_pSegmentTable->pFirstRecord[nSegmentToUnload].bIsPresent)
+				break;
+		}
 
 		LOG_INT("Unloading to disk segment No.", nSegmentToUnload);
 		return unload_segment(g_pSegmentTable->pFirstRecord + nSegmentToUnload);
@@ -179,8 +194,15 @@ void load_segment_into_memory(SegmentRecord* pRecord, Segment* pFreeSegment)
 	else
 		pSegmentToPlace->pNextSegment = pFreeSegment->pNextSegment;
 
+	// link previous segment to the new one
+	if ((SegmentRecord*)(g_pSegmentTable + 1) == pRecord)
+		g_pSegmentTable->pSegmentListHead = pSegmentToPlace;
+	else
+		(pRecord - 1)->segment.pNextSegment = pSegmentToPlace;
+
 	// copy segment content into memory
 	if (pRecord->paAddress)
+		// TODO: free disk memory
 		// load segment from disk memory
 		memcpy(VOID(pFreeSegment), VOID(pRecord->paAddress), pSegmentToPlace->nSize);
 	else
@@ -202,8 +224,7 @@ VA insert_new_record_into_table(size_t nSegmentSize)
 	SET_VA_SEG_INDEX(vaNewSegmentAddress, nTableSize);
 	SET_VA_SEG_OFFSET(vaNewSegmentAddress, 0L);
 
-	// TODO: WRONG
-	SegmentRecord* pNewRecord = g_pSegmentTable->pFirstRecord + nTableSize;
+	SegmentRecord* pNewRecord = nTableSize > 0 ? g_pSegmentTable->pFirstRecord + nTableSize : g_pSegmentTable->pFirstRecord;
 
 	SegmentRecord tmpRecord;
 	tmpRecord.paAddress = NULL;
@@ -255,7 +276,7 @@ int m_malloc(VA* ptr, size_t szBlock)
 
 	if (!pFreeSegment)
 	{
-		LOG_INT("Unloading to disk memory new segment No.", GET_VA_SEG_INDEX(*ptr));
+		LOG_INT("Unloading to disk NEW segment No.", GET_VA_SEG_INDEX(*ptr));
 		unload_segment(pNewRecord);
 	}
 	else
@@ -311,6 +332,7 @@ int m_write(VA ptr, void* pBuffer, size_t szBuffer)
 
 int m_init(int n, int szPage)
 {
+
 #ifndef NO_LOG
 	const int signals[] = {SIGINT, SIGILL, SIGABRT, SIGFPE, SIGSEGV, SIGTERM};
 	for (size_t i = 0; i < 6; ++i)
@@ -333,10 +355,10 @@ int m_init(int n, int szPage)
 		return UNKNOWN_ERROR;
 
 	g_pSegmentTable = (SegmentTable*)g_paStartAddress;
-	LOG_ADDR("SegmentTable physical address:", g_paStartAddress);
-	LOG_INT("SegmentTable size:", SEG_TABLE_SIZE(g_nMaxSegments));
+	LOG_ADDR("SegmentTable physical address:", LONG(g_paStartAddress));
+	LOG_INT("SegmentTable size (bytes):", SEG_TABLE_SIZE(g_nMaxSegments));
 	g_paStartAddress = g_paStartAddress + SEG_TABLE_SIZE(g_nMaxSegments);
-	LOG_ADDR("First available physical address:", g_paStartAddress);
+	LOG_ADDR("First available physical address:", LONG(g_paStartAddress));
 
 	// init segment table
 	SegmentTable tmpTable;
