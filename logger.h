@@ -7,6 +7,7 @@
     #define TERMINATE_LOGGER(sig) terminate_logger(sig)
 
     #define LOG(str) log_msg(str)
+    #define LOG_STR(str) log_str(str)
     #define LOG_INT(str, value) log_msg_int(str, value)
     #define LOG_LONG(str, value) log_msg_long(str, value)
     #define LOG_ADDR(str, addr) log_msg_addr(str, addr)
@@ -15,6 +16,7 @@
     #define TERMINATE_LOGGER
 
     #define LOG(str) str
+    #define LOG_STR(str) str
     #define LOG_INT(str, value) str, value
     #define LOG_LONG(str, value) str, value
     #define LOG_ADDR(str, addr) str, addr

@@ -100,8 +100,9 @@ Segment* initialize_free_segment(PA paStartAddress, size_t nSize, Segment* pNext
 
 	memcpy(VOID(paStartAddress), VOID(&freeSegment), sizeof(Segment));
 
-	LOG_ADDR("Free memory segment is initialized with the address:", LONG(paStartAddress));
-	LOG_INT("			and size:", LONG(nSize));
+	LOG("Initializing free memory segment:");
+	LOG_INT("\tsize:", nSize);
+	LOG_ADDR("\taddress:", LONG(paStartAddress));
 
 	return (Segment*)paStartAddress;
 }
@@ -186,6 +187,7 @@ void load_segment_into_memory(SegmentRecord* pRecord, Segment* pFreeSegment)
 		memset(VOID(pFreeSegment), 0, pSegmentToPlace->nSize);
 	pRecord->paAddress = (PA)pFreeSegment;
 	pRecord->bIsPresent = true;
+	//pSegmentToPlace->bIsFree = false;
 	
 	LOG("Segment has been successfully loaded");
 }
@@ -237,7 +239,7 @@ void log_size()
 
 int m_malloc(VA* ptr, size_t szBlock)
 {
-	LOG_INT("Initializing memory segment of size:", szBlock);
+	LOG_INT("m_malloc: Initializing memory segment of size:", szBlock);
 	// TODO: check max block size
 	if (szBlock < 0)
 		return WRONG_PARAMETERS;
@@ -258,7 +260,9 @@ int m_malloc(VA* ptr, size_t szBlock)
 	}
 	else
 	{
-		LOG_INT("Loading into memory segment No.", GET_VA_SEG_INDEX(*ptr));
+		LOG("Loading segment into memory:");
+		LOG_INT("\tsegment No.", GET_VA_SEG_INDEX(*ptr));
+		LOG_ADDR("\tdestination address -", LONG(pFreeSegment));
 		load_segment_into_memory(pNewRecord, pFreeSegment);
 	}
 
@@ -313,7 +317,7 @@ int m_init(int n, int szPage)
 		assert(signal(signals[i], terminate_logger) != SIG_ERR);
 #endif
 
-	LOG("Initializing memory manager");
+	LOG("m_init: Initializing memory manager");
 	log_size();
 	// TODO: check max number of segments and their size
 	if (n <= 0 || szPage <= 0)
