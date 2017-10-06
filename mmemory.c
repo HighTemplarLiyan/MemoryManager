@@ -88,6 +88,8 @@ size_t g_nCurrentVasSize = 0;
 SegmentTable* g_pSegmentTable;
 int g_nMaxSegments;
 
+#define GET_SEG_RECORD(va) (g_pSegmentTable->pFirstRecord + GET_VA_SEG_INDEX(va))
+
 ///////////////////////////////////////////////////////////////////////////////
 
 // TODO: merge consequently place free segments
@@ -302,32 +304,40 @@ int m_read(VA ptr, void* pBuffer, size_t szBuffer)
 
 int m_write(VA ptr, void* pBuffer, size_t szBuffer)
 {
-	/*
-	SegmentRecord* pRecord = g_pSegmentTable->pFirstRecord + GET_VA_SEG_INDEX(ptr);
+	// TODO: check buffer for NULL
 
-	if (!pRecord)
-		return UNKNOWN_ERROR;
+	const int nSegmentIndex = GET_VA_SEG_INDEX(ptr);
+	const int nSegmentOffset = GET_VA_SEG_OFFSET(ptr);
+	LOG("m_write: Writing into segment");
+	LOG_INT("        segment No.", nSegmentIndex);
+	LOG_INT("        offset:", nSegmentOffset);
 
-	if (pRecord->segment.nSize - GET_VA_SEG_OFFSET(ptr) < szBuffer)
+	if (nSegmentIndex  >= g_pSegmentTable->nSize || nSegmentIndex < 0)
+		return WRONG_PARAMETERS;
+
+	SegmentRecord* pRecord = GET_SEG_RECORD(ptr);
+
+	if (nSegmentOffset >= pRecord->segment.nSize || nSegmentOffset < 0 || szBuffer <= 0)
+		return WRONG_PARAMETERS;
+
+	if (pRecord->segment.nSize - nSegmentOffset < szBuffer)
 		return SEGMENT_VIOLATION;
-
-	PA paAddress = NULL;
 
 	// TODO: check size
 	if (!pRecord->bIsPresent)
 	{
-		if (!place_segment_into_memory(pRecord))
-		{
-			// remove one of segments from physical memory
-			return SUCCESS;
-		}
+		LOG("Required segment is not present in memory");
+		Segment* pFreeSegment = find_free_place_for_segment(pRecord->segment.nSize, true);
+		
+		LOG_INT("Loading into memory segment No.", nSegmentIndex);
+		load_segment_into_memory(pRecord, pFreeSegment);
 	}
 
-	paAddress = pRecord->paAddress + GET_VA_SEG_OFFSET(ptr);
-	memcpy(VOID(paAddress), pBuffer, szBuffer);
+	LOG_INT("Writing into segment from buffer of size:", szBuffer);
+	memcpy(VOID(pRecord->paAddress + nSegmentOffset), pBuffer, szBuffer);
 
+	LOG("m_write: Writing successfully finished");
 	return SUCCESS;
-	*/
 }
 
 int m_init(int n, int szPage)
