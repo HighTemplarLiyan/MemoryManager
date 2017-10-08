@@ -299,6 +299,39 @@ int m_free(VA ptr)
 
 int m_read(VA ptr, void* pBuffer, size_t szBuffer)
 {
+	// TODO: check buffer for NULL
+
+	const int nSegmentIndex = GET_VA_SEG_INDEX(ptr);
+	const int nSegmentOffset = GET_VA_SEG_OFFSET(ptr);
+	LOG("m_read: Reading from segment");
+	LOG_INT("        segment No.", nSegmentIndex);
+	LOG_INT("        offset:", nSegmentOffset);
+
+	if (nSegmentIndex  >= g_pSegmentTable->nSize || nSegmentIndex < 0)
+		return WRONG_PARAMETERS;
+
+	SegmentRecord* pRecord = GET_SEG_RECORD(ptr);
+
+	if (nSegmentOffset >= pRecord->segment.nSize || nSegmentOffset < 0 || szBuffer <= 0)
+		return WRONG_PARAMETERS;
+
+	if (pRecord->segment.nSize - nSegmentOffset < szBuffer)
+		return SEGMENT_VIOLATION;
+
+	// TODO: check size
+	if (!pRecord->bIsPresent)
+	{
+		LOG("Required segment is not present in memory");
+		Segment* pFreeSegment = find_free_place_for_segment(pRecord->segment.nSize, true);
+		
+		LOG_INT("Loading into memory segment No.", nSegmentIndex);
+		load_segment_into_memory(pRecord, pFreeSegment);
+	}
+
+	LOG_INT("Reading from segment to buffer of size:", szBuffer);
+	memcpy(pBuffer, VOID(pRecord->paAddress + nSegmentOffset), szBuffer);
+
+	LOG("m_write: Reading successfully finished");
 	return SUCCESS;
 }
 
