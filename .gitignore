@@ -1,3 +1,5 @@
 bin/
 .vscode/
+.idea/
+cmake-build-debug/
 *.txt

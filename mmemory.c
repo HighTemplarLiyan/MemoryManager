@@ -151,7 +151,7 @@ Segment* find_free_place_for_segment(size_t nSize, bool bForce)
 		// TODO: choose memory management algorithm: best fit, first fit, etc.
 		if (pSegment->bIsFree && pSegment->nSize >= nSize)
 		{
-			LOG_ADDR("Found free segment with address:", pSegment);
+			LOG_ADDR("Found free segment with address:", LONG(pSegment));
 			return pSegment;
 		}
 
@@ -238,8 +238,8 @@ VA insert_new_record_into_table(size_t nSegmentSize)
 	memcpy(VOID(pNewRecord), VOID(&tmpRecord), sizeof(SegmentRecord));
 
 	LOG_INT("SegmentRecord No.", nTableSize);
-	LOG_ADDR("    is loaded into memory address:", pNewRecord);
-	LOG_ADDR("    segment VA:", vaNewSegmentAddress);
+	LOG_ADDR("    is loaded into memory address:", LONG(pNewRecord));
+	LOG_ADDR("    segment VA:", LONG(vaNewSegmentAddress));
 
 	g_pSegmentTable->nSize++;
 

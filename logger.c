@@ -25,21 +25,21 @@ int init_logger(const char* sFileName)
     }
     else
     {
-        log_str("===================================================");
+        log_str("=============================================================");
         log_msg("===== Logger initialized =====");
-        log_str("===================================================");
+        log_str("=============================================================");
         return 1;
     }
 }
 
 void terminate_logger(int sig)
 {
-    log_str("===================================================");
+    log_str("=============================================================");
     if (!sig)
         log_msg("===== Logger terminated =====");
     else
         log_msg("===== Logger terminated due to signal raise =====");
-    log_str("===================================================");
+        log_str("=============================================================");
     fclose(pLogFile);
 }
 
@@ -52,21 +52,21 @@ void log_msg(char* str)
 {
     char t[20];
     get_time(t);
-    fprintf(pLogFile, "%s: %s\n", t, str);
+    fprintf(pLogFile, "%s:\t%s\n", t, str);
 }
 
 void log_msg_int(char* str, int value)
 {
     char t[20];
     get_time(t);
-    fprintf(pLogFile, "%s: %s %d\n", t, str, value);
+    fprintf(pLogFile, "%s:\t%s %d\n", t, str, value);
 }
 
 void log_msg_long(char* str, long value)
 {
     char t[20];
     get_time(t);
-    fprintf(pLogFile, "%s: %s %ld\n", t, str, value);
+    fprintf(pLogFile, "%s:\t%s %ld\n", t, str, value);
 }
 
 void log_msg_addr(char* str, long addr)
@@ -74,5 +74,5 @@ void log_msg_addr(char* str, long addr)
     char t[20];
     get_time(t);
     // TODO: add preceding zeros
-    fprintf(pLogFile, "%s: %s %#lx\n", t, str, addr);
+    fprintf(pLogFile, "%s:\t%s %#lx\n", t, str, addr);
 }
