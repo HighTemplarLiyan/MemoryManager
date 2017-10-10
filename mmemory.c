@@ -36,6 +36,7 @@ typedef struct
 	Segment segment;
 	PA paAddress;
 	bool bIsPresent;
+	bool bIsAvailable;
 
 } SegmentRecord;
 
@@ -44,6 +45,7 @@ typedef struct
 	SegmentRecord* pFirstRecord;
 	// TODO: size_t
 	int nSize;
+	int nFirstAvailableRecord;
 
 	Segment* pSegmentListHead;
 
@@ -89,10 +91,12 @@ SegmentTable* g_pSegmentTable;
 int g_nMaxSegments;
 
 #define GET_SEG_RECORD(va) (g_pSegmentTable->pFirstRecord + GET_VA_SEG_INDEX(va))
+#define GET_SEG_RECORD_NO(i) (g_pSegmentTable->pFirstRecord + i)
 
 ///////////////////////////////////////////////////////////////////////////////
 
 // TODO: merge consequently place free segments
+// TODO: handle segments with size < sizeof(Segment)
 Segment* initialize_free_segment(PA paStartAddress, size_t nSize, Segment* pNextSegment)
 {
 	Segment freeSegment;
@@ -109,6 +113,7 @@ Segment* initialize_free_segment(PA paStartAddress, size_t nSize, Segment* pNext
 	return (Segment*)paStartAddress;
 }
 
+// TODO: restore segment list integrity
 Segment* unload_segment(SegmentRecord* pRecord)
 {
 	Segment* pSegmentToUnload = &pRecord->segment;
@@ -218,30 +223,48 @@ void load_segment_into_memory(SegmentRecord* pRecord, Segment* pFreeSegment)
 
 VA insert_new_record_into_table(size_t nSegmentSize)
 {
+	// TODO: check max records
+
 	LOG("Inserting new record into SegmentTable");
 	VA vaNewSegmentAddress = 0L;
 
 	const size_t nTableSize = g_pSegmentTable->nSize;
 
-	SET_VA_SEG_INDEX(vaNewSegmentAddress, nTableSize);
+	SET_VA_SEG_INDEX(vaNewSegmentAddress, LONG(g_pSegmentTable->nFirstAvailableRecord));
 	SET_VA_SEG_OFFSET(vaNewSegmentAddress, 0L);
 
-	SegmentRecord* pNewRecord = nTableSize > 0 ? g_pSegmentTable->pFirstRecord + nTableSize : g_pSegmentTable->pFirstRecord;
+	//SegmentRecord* pNewRecord = nTableSize > 0 ? g_pSegmentTable->pFirstRecord + nTableSize : g_pSegmentTable->pFirstRecord;
+	SegmentRecord* pNewRecord = GET_SEG_RECORD(vaNewSegmentAddress);
 
 	SegmentRecord tmpRecord;
 	tmpRecord.paAddress = NULL;
 	tmpRecord.bIsPresent = false;
+	tmpRecord.bIsAvailable = false;
 	tmpRecord.segment.nSize = nSegmentSize;
 	tmpRecord.segment.bIsFree = false;
 	tmpRecord.segment.pNextSegment = NULL;
 
 	memcpy(VOID(pNewRecord), VOID(&tmpRecord), sizeof(SegmentRecord));
 
-	LOG_INT("SegmentRecord No.", nTableSize);
+	LOG_INT("SegmentRecord No.", g_pSegmentTable->nFirstAvailableRecord);
 	LOG_ADDR("    is loaded into memory address:", LONG(pNewRecord));
 	LOG_ADDR("    segment VA:", LONG(vaNewSegmentAddress));
 
 	g_pSegmentTable->nSize++;
+
+	// find place to load next record
+	bool bFoundAvailable = false;
+	for (int i = g_pSegmentTable->nFirstAvailableRecord + 1; i < nTableSize; ++i)
+		if (GET_SEG_RECORD_NO(i)->bIsAvailable)
+		{
+			g_pSegmentTable->nFirstAvailableRecord = i;
+			bFoundAvailable = true;
+			break;
+		}
+	if (!bFoundAvailable)
+		g_pSegmentTable->nFirstAvailableRecord = g_pSegmentTable->nSize;
+
+	LOG_INT("Next record will have index", g_pSegmentTable->nFirstAvailableRecord);
 
 	return vaNewSegmentAddress;
 }
@@ -294,6 +317,30 @@ int m_malloc(VA* ptr, size_t szBlock)
 
 int m_free(VA ptr)
 {
+	const int nSegmentIndex = GET_VA_SEG_INDEX(ptr);
+	const int nSegmentOffset = GET_VA_SEG_OFFSET(ptr);
+
+	if (nSegmentIndex >= g_pSegmentTable->nSize || nSegmentIndex < 0)
+		return WRONG_PARAMETERS;
+
+	// TODO: ignore non-zero offset?
+	if (nSegmentIndex >= g_pSegmentTable->nSize ||
+		nSegmentIndex < 0 ||
+		nSegmentOffset != 0)
+		return WRONG_PARAMETERS;
+
+	SegmentRecord* pRecord = GET_SEG_RECORD(ptr);
+
+	if (pRecord->bIsPresent)
+		// TODO: restore segment list integrity
+		initialize_free_segment(pRecord->paAddress, pRecord->segment.nSize, pRecord->segment.pNextSegment);
+	else
+		free(pRecord->paAddress);
+
+	pRecord->bIsAvailable = true;
+
+	g_pSegmentTable->nFirstAvailableRecord = g_pSegmentTable->nFirstAvailableRecord < nSegmentIndex ? g_pSegmentTable->nFirstAvailableRecord : nSegmentIndex;
+
 	return SUCCESS;
 }
 
@@ -407,6 +454,7 @@ int m_init(int n, int szPage)
 	SegmentTable tmpTable;
 	tmpTable.pFirstRecord = (SegmentRecord*)(g_pSegmentTable + 1);
 	tmpTable.nSize = 0;
+	tmpTable.nFirstAvailableRecord = 0;
 	tmpTable.pSegmentListHead = initialize_free_segment(g_paStartAddress, nTotalMemory - SEG_TABLE_SIZE(g_nMaxSegments), NULL);
 	memcpy(VOID(g_pSegmentTable), VOID(&tmpTable), sizeof(SegmentTable));
 
