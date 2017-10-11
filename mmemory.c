@@ -26,7 +26,9 @@ struct Segment
 {
 	long nSize;
 	bool bIsFree;
+
 	struct Segment* pNextSegment;
+	struct Segment* pPrevSegment;
 
 };
 typedef struct Segment Segment;
@@ -97,18 +99,29 @@ int g_nMaxSegments;
 
 // TODO: merge consequently place free segments
 // TODO: handle segments with size < sizeof(Segment)
-Segment* initialize_free_segment(PA paStartAddress, size_t nSize, Segment* pNextSegment)
+Segment* initialize_free_segment(PA paStartAddress, size_t nSize, Segment* pPrev, Segment* pNext)
 {
 	Segment freeSegment;
 	freeSegment.nSize = nSize;
 	freeSegment.bIsFree = true;
-	freeSegment.pNextSegment = pNextSegment;
+
+	// link segments
+	freeSegment.pPrevSegment = pPrev;
+	if (pPrev)
+		pPrev->pNextSegment = (Segment*)paStartAddress;
+	else
+		g_pSegmentTable->pSegmentListHead = (Segment*)paStartAddress;
+	freeSegment.pNextSegment = pNext;
+	if (pNext)
+		pNext->pPrevSegment = (Segment*)paStartAddress;
 
 	memcpy(VOID(paStartAddress), VOID(&freeSegment), sizeof(Segment));
 
 	LOG("Initializing free memory segment:");
 	LOG_INT("\tsize:", nSize);
 	LOG_ADDR("\taddress:", LONG(paStartAddress));
+	LOG_ADDR("\tnext:", LONG(pNext));
+	LOG_ADDR("\tprev:", LONG(pPrev));
 
 	return (Segment*)paStartAddress;
 }
@@ -129,12 +142,13 @@ Segment* unload_segment(SegmentRecord* pRecord)
 		// copy segment content to disk memory
 		memcpy(pDiskMemory, pRecord->paAddress, pSegmentToUnload->nSize);
 		// replace segment in memory with free segment
-		pFreeSegment = initialize_free_segment(pRecord->paAddress, pSegmentToUnload->nSize, pSegmentToUnload->pNextSegment);
+		pFreeSegment = initialize_free_segment(pRecord->paAddress, pSegmentToUnload->nSize, pSegmentToUnload->pPrevSegment, pSegmentToUnload->pNextSegment);
 	}
 
 	// update record state
 	pRecord->paAddress = pDiskMemory;
 	pRecord->bIsPresent = false;
+	pSegmentToUnload->pPrevSegment = NULL;
 	pSegmentToUnload->pNextSegment = NULL;
 
 	LOG("Segment successfully unloaded");
@@ -156,7 +170,7 @@ Segment* find_free_place_for_segment(size_t nSize, bool bForce)
 		// TODO: choose memory management algorithm: best fit, first fit, etc.
 		if (pSegment->bIsFree && pSegment->nSize >= nSize)
 		{
-			LOG_ADDR("Found free segment with address:", LONG(pSegment));
+			LOG_ADDR("Found suitable free segment with address:", LONG(pSegment));
 			return pSegment;
 		}
 
@@ -169,9 +183,11 @@ Segment* find_free_place_for_segment(size_t nSize, bool bForce)
 		const int nTableSize = g_pSegmentTable->nSize;
 		
 		// TODO: implement more sophisticated and effective algorithm
+		// TODO: check unloaded block size
 		int nSegmentToUnload;
 		while (true)
 		{
+			// select random segment to unload
 			nSegmentToUnload = nTableSize > 0 ? rand() % nTableSize : 0;
 			if (g_pSegmentTable->pFirstRecord[nSegmentToUnload].bIsPresent)
 				break;
@@ -195,17 +211,23 @@ void load_segment_into_memory(SegmentRecord* pRecord, Segment* pFreeSegment)
 	{
 		PA paNextSegment = (char*)pFreeSegment + pSegmentToPlace->nSize;
 
-		Segment* pNewFreeSegment = initialize_free_segment(paNextSegment, nMemoryLeft, pFreeSegment->pNextSegment);
-		pSegmentToPlace->pNextSegment = pNewFreeSegment;
+		initialize_free_segment(paNextSegment, nMemoryLeft, pSegmentToPlace, pFreeSegment->pNextSegment);
 	}
 	else
+	{
+		// if no memory left, just new segment to the next one
 		pSegmentToPlace->pNextSegment = pFreeSegment->pNextSegment;
+		if (pSegmentToPlace->pNextSegment)
+			pSegmentToPlace->pNextSegment->pPrevSegment = pSegmentToPlace;
+	}
 
 	// link previous segment to the new one
-	if ((SegmentRecord*)(g_pSegmentTable + 1) == pRecord)
-		g_pSegmentTable->pSegmentListHead = pSegmentToPlace;
+	pSegmentToPlace->pPrevSegment = pFreeSegment->pPrevSegment;
+	if (pFreeSegment->pPrevSegment)
+		pFreeSegment->pPrevSegment->pNextSegment = pSegmentToPlace;
 	else
-		(pRecord - 1)->segment.pNextSegment = pSegmentToPlace;
+		// set segment list head
+		g_pSegmentTable->pSegmentListHead = pSegmentToPlace;
 
 	// copy segment content into memory
 	if (pRecord->paAddress)
@@ -333,7 +355,7 @@ int m_free(VA ptr)
 
 	if (pRecord->bIsPresent)
 		// TODO: restore segment list integrity
-		initialize_free_segment(pRecord->paAddress, pRecord->segment.nSize, pRecord->segment.pNextSegment);
+		initialize_free_segment(pRecord->paAddress, pRecord->segment.nSize, pRecord->segment.pPrevSegment, pRecord->segment.pNextSegment);
 	else
 		free(pRecord->paAddress);
 
@@ -455,7 +477,7 @@ int m_init(int n, int szPage)
 	tmpTable.pFirstRecord = (SegmentRecord*)(g_pSegmentTable + 1);
 	tmpTable.nSize = 0;
 	tmpTable.nFirstAvailableRecord = 0;
-	tmpTable.pSegmentListHead = initialize_free_segment(g_paStartAddress, nTotalMemory - SEG_TABLE_SIZE(g_nMaxSegments), NULL);
+	tmpTable.pSegmentListHead = initialize_free_segment(g_paStartAddress, nTotalMemory - SEG_TABLE_SIZE(g_nMaxSegments), NULL, NULL);
 	memcpy(VOID(g_pSegmentTable), VOID(&tmpTable), sizeof(SegmentTable));
 
 	return SUCCESS;
