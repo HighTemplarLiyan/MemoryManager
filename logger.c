@@ -4,6 +4,8 @@
 
 #include "logger.h"
 
+#define TIME_BUF_SIZE 22
+
 FILE* pLogFile = NULL;
 
 void get_time(char* buf)
@@ -12,7 +14,7 @@ void get_time(char* buf)
     time(&rawtime);
     static struct tm* timeinfo;
     timeinfo = localtime(&rawtime);
-    strftime(buf, 20, "%T_%m-%d-%Y", timeinfo);
+    strftime(buf, TIME_BUF_SIZE, "%m/%d/%Y - %T", timeinfo);
 }
 
 int init_logger(const char* sFileName)
@@ -50,28 +52,28 @@ void log_str(char* str)
 
 void log_msg(char* str)
 {
-    char t[20];
+    char t[TIME_BUF_SIZE];
     get_time(t);
     fprintf(pLogFile, "%s:\t%s\n", t, str);
 }
 
 void log_msg_int(char* str, int value)
 {
-    char t[20];
+    char t[TIME_BUF_SIZE];
     get_time(t);
     fprintf(pLogFile, "%s:\t%s %d\n", t, str, value);
 }
 
 void log_msg_long(char* str, long value)
 {
-    char t[20];
+    char t[TIME_BUF_SIZE];
     get_time(t);
     fprintf(pLogFile, "%s:\t%s %ld\n", t, str, value);
 }
 
 void log_msg_addr(char* str, long addr)
 {
-    char t[20];
+    char t[TIME_BUF_SIZE];
     get_time(t);
     // TODO: add preceding zeros
     fprintf(pLogFile, "%s:\t%s %#lx\n", t, str, addr);
