@@ -99,35 +99,63 @@ SegmentTable* g_pSegTable;
 
 ///////////////////////////////////////////////////////////////////////////////
 
-// TODO (IMPORTANT AS HELL): merge consequently place free segments
+Segment* merge_free_segments(Segment* pFirstSegment, Segment* pSecondSegment)
+{
+	LOG("Merging free segments:");
+	LOG_ADDR("    first:", LONG(pFirstSegment));
+	LOG_ADDR("    second:", LONG(pSecondSegment));
+
+	pFirstSegment->nSize += pSecondSegment->nSize;
+	pFirstSegment->pNext = pSecondSegment->pNext;
+	if (pSecondSegment->pNext)
+		pSecondSegment->pPrev = pFirstSegment;
+	
+	// TODO: redundant ???
+	memset(pSecondSegment, 0, sizeof(Segment));
+	return pFirstSegment;
+}
+
 // TODO: handle segments with size < sizeof(Segment)
 Segment* initialize_free_segment(PA pAddress, size_t nSize, Segment* pPrevious, Segment* pNext)
 {
-	// TODO: do some checks
+	// TODO: do some checks (probably not)
+
+	Segment* pFreeSegment = (Segment*)pAddress;
 
 	Segment freeSegment;
 	freeSegment.nSize = nSize;
 	freeSegment.bIsFree = true;
 
-	// link segments
+	// link/merge segments
 	freeSegment.pPrev = pPrevious;
 	if (pPrevious)
-		pPrevious->pNext = (Segment*)pAddress;
+	{
+		if (pPrevious->bIsFree)
+			pFreeSegment = merge_free_segments(pPrevious, pFreeSegment);
+		else
+			pPrevious->pNext = pFreeSegment;
+	}
 	else
 		g_pSegTable->pSegListHead = (Segment*)pAddress;
+
 	freeSegment.pNext = pNext;
 	if (pNext)
-		pNext->pPrev = (Segment*)pAddress;
+	{
+		if (pNext->bIsFree)
+			pFreeSegment = merge_free_segments(pFreeSegment, pNext);
+		else
+			pNext->pPrev = (Segment*)pAddress;
+	}
 
-	memcpy(VOID(pAddress), VOID(&freeSegment), sizeof(Segment));
+	memcpy(VOID(pFreeSegment), VOID(&freeSegment), sizeof(Segment));
 
 	LOG("Free memory segment initialized:");
 	LOG_INT("\tsize:", nSize);
-	LOG_ADDR("\taddress:", LONG(pAddress));
+	LOG_ADDR("\taddress:", LONG(pFreeSegment));
 	LOG_ADDR("\tnext:", LONG(pNext));
 	LOG_ADDR("\tprev:", LONG(pPrevious));
 
-	return (Segment*)pAddress;
+	return pFreeSegment;
 }
 
 Segment* unload_segment(SegmentRecord* pRecord)
@@ -313,7 +341,7 @@ VA insert_new_record_into_table(size_t nSegmentSize)
 	memcpy(VOID(pNewRecord), VOID(&tmpRecord), sizeof(SegmentRecord));
 
 	LOG_INT("SegmentRecord No.", g_pSegTable->nFirstAvailableRecord);
-	LOG_ADDR("    is loaded in	to memory address:", LONG(pNewRecord));
+	LOG_ADDR("    is loaded into memory address:", LONG(pNewRecord));
 	LOG_ADDR("    segment VA:", LONG(vaNewSegmentAddress));
 
 	if (g_pSegTable->nFirstAvailableRecord == g_pSegTable->nSize)
