@@ -51,6 +51,8 @@ typedef struct
 	int nReserved;
 	int nFirstAvailableRecord;
 
+    int nForbiddenSegments[3];
+
 	Segment* pSegListHead;
 
 } SegmentTable;
@@ -65,6 +67,7 @@ typedef struct
 
 #define LONG(x) ((long)(x))
 #define VOID(x) ((void*)(x))
+#define RECORD(x) ((SegmentRecord*)(x))
 
 // number of bytes in VA reserved for segment index and offset
 #define SEG_INDEX_BYTES   2
@@ -84,6 +87,7 @@ typedef struct
 
 // limits
 #define VAS_SIZE     (1000 * 1024 * 1024) // bytes
+// TODO: add practical limit
 #define MAX_SEGMENTS ((2 << (8*SEG_INDEX_BYTES)) - 1)
 #define MAX_SEG_SIZE ((2L << (8*SEG_OFFSET_BYTES)) - 1)
 #define MIN_SEG_SIZE (SEG_TABLE_INCREMENT * sizeof(SegmentRecord))
@@ -99,8 +103,9 @@ int g_nMaxRecords;
 
 SegmentTable* g_pSegTable;
 
-#define GET_SEG_RECORD(va) (g_pSegTable->pFirstRecord + GET_VA_SEG_INDEX(va))
-#define GET_SEG_RECORD_NO(i) (g_pSegTable->pFirstRecord + i)
+#define GET_SEG_RECORD(va)           (g_pSegTable->pFirstRecord + GET_VA_SEG_INDEX(va))
+#define GET_SEG_RECORD_NO(i)         (g_pSegTable->pFirstRecord + i)
+#define GET_SEG_RECORD_INDEX(record) ((LONG(record) - LONG(g_pSegTable)) / sizeof(SegmentRecord))
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -114,56 +119,53 @@ Segment* merge_free_segments(Segment* pFirstSegment, Segment* pSecondSegment)
 	pFirstSegment->pNext = pSecondSegment->pNext;
 	if (pSecondSegment->pNext)
 		pSecondSegment->pPrev = pFirstSegment;
-	
-	// TODO: redundant ???
-	memset(pSecondSegment, 0, sizeof(Segment));
+
 	return pFirstSegment;
 }
 
 Segment* initialize_free_segment(PA pAddress, size_t nSize, Segment* pPrevious, Segment* pNext)
 {
-	// TODO: do some checks (probably not)
+    // TODO: do some checks (probably not)
 
 	Segment* pFreeSegment = (Segment*)pAddress;
 
-	Segment freeSegment;
-	freeSegment.nSize = nSize;
-	freeSegment.bIsFree = true;
+    pFreeSegment->nSize = nSize;
+    pFreeSegment->bIsFree = true;
 
 	// link/merge segments
-	freeSegment.pPrev = pPrevious;
+    pFreeSegment->pPrev = pPrevious;
 	if (pPrevious)
 	{
-		if (pPrevious->bIsFree)
-			pFreeSegment = merge_free_segments(pPrevious, pFreeSegment);
+        if (pPrevious->bIsFree)
+            pFreeSegment = merge_free_segments(pPrevious, pFreeSegment);
 		else
 			pPrevious->pNext = pFreeSegment;
 	}
 	else
-		g_pSegTable->pSegListHead = (Segment*)pAddress;
+		g_pSegTable->pSegListHead = pFreeSegment;
 
-	freeSegment.pNext = pNext;
+    pFreeSegment->pNext = pNext;
 	if (pNext)
 	{
-		if (pNext->bIsFree)
-			pFreeSegment = merge_free_segments(pFreeSegment, pNext);
+        if (pNext->bIsFree)
+            pFreeSegment = merge_free_segments(pFreeSegment, pNext);
 		else
-			pNext->pPrev = (Segment*)pAddress;
+			pNext->pPrev = pFreeSegment;
 	}
-
-	memcpy(VOID(pFreeSegment), VOID(&freeSegment), sizeof(Segment));
 
 	LOG("Free memory segment initialized:");
 	LOG_INT("\tsize:", nSize);
 	LOG_ADDR("\taddress:", LONG(pFreeSegment));
-	LOG_ADDR("\tnext:", LONG(pNext));
-	LOG_ADDR("\tprev:", LONG(pPrevious));
+	LOG_ADDR("\tnext:", LONG(pFreeSegment->pNext));
+	LOG_ADDR("\tprev:", LONG(pFreeSegment->pPrev));
 
 	return pFreeSegment;
 }
 
 Segment* unload_segment(SegmentRecord* pRecord)
 {
+    LOG_INT("Unloading segment No.", GET_SEG_RECORD_INDEX(pRecord));
+    LOG_ADDR("  seg record:", LONG(pRecord));
 	Segment* pSegmentToUnload = &pRecord->segment;
 
 	// allocate disk memory for segment
@@ -197,47 +199,107 @@ Segment* unload_segment(SegmentRecord* pRecord)
 	return pFreeSegment;
 }
 
+bool segment_is_forbidden(const SegmentRecord* pSegRecord)
+{
+    const int nSegIndex = GET_SEG_RECORD_INDEX(pSegRecord);
+    for (int i = 0; i < 3; ++i)
+    {
+        if (g_pSegTable->nForbiddenSegments[i] == nSegIndex)
+            return true;
+    }
+    return false;
+}
+
 Segment* find_free_place_for_segment(size_t nSize, bool bForce)
 {
-	LOG_INT("Searching for free place to load the segment of size:", nSize);
-	Segment* pSegment = g_pSegTable->pSegListHead;
-	while (pSegment)
+    LOG_INT("Searching for free place to load the segment of size:", nSize);
+
+    // + sizeof(Segment) - ensure that there will be no free segments with size < sizeof(Segment)
+    const size_t nSizeWithOffset = nSize + sizeof(Segment);
+
+	Segment* pSeg = g_pSegTable->pSegListHead;
+	while (pSeg)
 	{
 		LOG("    found segment:");
-		LOG_ADDR("        address:", LONG(pSegment));
-		LOG_INT("        size:", pSegment->nSize);
-		LOG_INT("        free:", pSegment->bIsFree);
+		LOG_ADDR("        address:", LONG(pSeg));
+		LOG_INT("        size:", pSeg->nSize);
+		LOG_INT("        free:", pSeg->bIsFree);
 
-        // TODO: choose memory management algorithm: best fit, first fit, etc.
-        // + sizeof(Segment) - ensure that there will be no free segments with size < sizeof(Segment)
-		if (pSegment->bIsFree && pSegment->nSize >= nSize + sizeof(Segment))
+		if (pSeg->bIsFree && (pSeg->nSize >= nSizeWithOffset || pSeg->nSize == nSize))
 		{
-			LOG_ADDR("Found suitable free segment with address:", LONG(pSegment));
-			return pSegment;
+			LOG_ADDR("Found suitable free segment with address:", LONG(pSeg));
+			return pSeg;
 		}
 
-		pSegment = pSegment->pNext;
+		pSeg = pSeg->pNext;
 	}
 	LOG("No suitable free segment found");
 
 	if (bForce)
 	{
-		const int nTableSize = g_pSegTable->nSize;
-		
-		// TODO: implement more sophisticated and effective algorithm
-		int nSegmentToUnload;
-		while (true)
-		{
-			// select random segment to unload
-            nSegmentToUnload = nTableSize > 0 ? rand() % nTableSize : 0;
-            
-            SegmentRecord* pRecord = GET_SEG_RECORD_NO(nSegmentToUnload);
-			if (pRecord->bIsPresent && pRecord->segment.nSize >= nSize + sizeof(Segment))
-				break;
-		}
+        LOG("Forcing memory deallocation");
 
-		LOG_INT("Unloading to disk the segment No.", nSegmentToUnload);
-		return unload_segment(g_pSegTable->pFirstRecord + nSegmentToUnload);
+        // find first not free and not forbidden segment
+        pSeg = g_pSegTable->pSegListHead;
+        while (pSeg)
+        {
+            if (!pSeg->bIsFree && !segment_is_forbidden(RECORD(pSeg)))
+                break;
+            pSeg = pSeg->pNext;
+        }
+        assert(pSeg);
+
+        // find largest segment
+        Segment* pLargestSegment = pSeg;
+        while (pSeg)
+        {
+            if (!pSeg->bIsFree)
+            {
+                // found segment with suitable size
+                if (pSeg->nSize >= nSizeWithOffset || pSeg->nSize == nSize)
+                    return unload_segment(RECORD(pSeg));
+                
+                // mark largest found segment
+                if (pSeg->nSize > pLargestSegment->nSize)
+                    pLargestSegment = pSeg;
+            }
+            pSeg = pSeg->pNext;
+        }
+
+        // unload largest segment found
+        LOG_ADDR("Unloading largest:", LONG(pLargestSegment));
+        Segment* pFreeSeg = unload_segment(RECORD(pLargestSegment));
+
+        // keep unloading following segments
+        // TODO: consider segments of equal size
+        SegmentRecord* pNextRecord;
+        while (pFreeSeg->nSize < nSizeWithOffset && pFreeSeg->nSize != nSize && pFreeSeg->pNext)
+        {
+            pNextRecord = RECORD(pFreeSeg->pNext);
+            if (segment_is_forbidden(pNextRecord))
+                break;
+            pFreeSeg = unload_segment(pNextRecord);
+        }
+
+        if (pFreeSeg->nSize >= nSizeWithOffset || pFreeSeg->nSize == nSize)
+            return pFreeSeg;
+
+        // unload previous segments, if memory is still not enough
+        while (pFreeSeg->nSize < nSizeWithOffset && pFreeSeg->nSize != nSize && pFreeSeg->pPrev)
+        {
+            pNextRecord = RECORD(pFreeSeg->pNext);
+            if (segment_is_forbidden(pNextRecord))
+                break;
+            pFreeSeg = unload_segment(pNextRecord);
+        }
+
+        if (pFreeSeg->nSize < nSizeWithOffset && pFreeSeg->nSize != nSize)
+        {
+            LOG("Cannot deallocate enough memory for segment");
+            return NULL;
+        }
+
+        return pFreeSeg;
 	}
 
 	return NULL;
@@ -245,10 +307,13 @@ Segment* find_free_place_for_segment(size_t nSize, bool bForce)
 
 void load_segment_into_memory(SegmentRecord* pRecord, Segment* pFreeSegment)
 {
+    LOG("Loading segment into memory:");
+    LOG_INT("\tsegment No.", GET_SEG_RECORD_INDEX(pRecord));
+    LOG_ADDR("\tdestination address:", LONG(pFreeSegment));
+
 	Segment* pSegmentToLoad = &pRecord->segment;
 
 	const size_t nMemoryLeft = pFreeSegment->nSize - pSegmentToLoad->nSize;
-    //assert(nMemoryLeft >= 0);
 
     // initialize free segment in the rest of the memory
 	if (nMemoryLeft > 0)
@@ -278,7 +343,6 @@ void load_segment_into_memory(SegmentRecord* pRecord, Segment* pFreeSegment)
 
 	// copy segment content into memory
 	if (pRecord->pSegAddress)
-		// TODO: free disk memory
         // load segment from disk memory
     {
         memcpy(VOID(pFreeSegment), VOID(pRecord->pSegAddress), pSegmentToLoad->nSize);
@@ -291,6 +355,39 @@ void load_segment_into_memory(SegmentRecord* pRecord, Segment* pFreeSegment)
 	//pSegmentToLoad->bIsFree = false;
 	
 	LOG("Segment has been successfully loaded");
+}
+
+void load_adjacent_segments_into_memory(int nSegmentIndex)
+{
+    const int segmentsToLoad[3] = {nSegmentIndex, nSegmentIndex - 1, nSegmentIndex + 1};
+
+    LOG("Loading into memory adjacent segments:");
+    for (int i = 0; i < 3; ++i)
+        LOG_INT("    no.", segmentsToLoad[i]);
+
+    for (int i = 0; i < 3; ++i)
+    {
+        const int nSegment = segmentsToLoad[i];
+
+        SegmentRecord* pRecord;
+        if (nSegment >= 0 && nSegment < g_pSegTable->nSize)
+        {
+            pRecord = GET_SEG_RECORD_NO(nSegment);
+            if (!pRecord->bIsAvailable && !pRecord->bIsPresent)
+            {
+                // forbid segment from unloading, while loading adjacent ones
+                g_pSegTable->nForbiddenSegments[i] = nSegment;
+
+                Segment* pFreeSegment = find_free_place_for_segment(pRecord->segment.nSize, true);
+                if (pFreeSegment)
+                    load_segment_into_memory(pRecord, pFreeSegment);
+            }
+        }
+    }
+
+    // from now on segments can be unloaded
+    for (int i = 0; i < 3; ++i)
+        g_pSegTable->nForbiddenSegments[i] = -1;
 }
 
 // TODO: prevent table from filling all of the memory
@@ -341,6 +438,7 @@ VA insert_new_record_into_table(size_t nSegmentSize)
 
 	SegmentRecord* pNewRecord = GET_SEG_RECORD(vaNewSegmentAddress);
 
+    // TODO: there is no need to create tmpRecord
 	SegmentRecord tmpRecord;
 	tmpRecord.pSegAddress = NULL;
 	tmpRecord.bIsPresent = false;
@@ -351,7 +449,7 @@ VA insert_new_record_into_table(size_t nSegmentSize)
 
 	memcpy(VOID(pNewRecord), VOID(&tmpRecord), sizeof(SegmentRecord));
 
-	LOG_INT("SegmentRecord No.", g_pSegTable->nFirstAvailableRecord);
+	LOG_INT("Segment record No.", g_pSegTable->nFirstAvailableRecord);
 	LOG_ADDR("    is loaded into memory address:", LONG(pNewRecord));
 	LOG_ADDR("    segment VA:", LONG(vaNewSegmentAddress));
 
@@ -412,12 +510,7 @@ int m_malloc(VA* ptr, size_t szBlock)
 		unload_segment(pNewRecord);
 	}
 	else
-	{
-		LOG("Loading segment into memory:");
-		LOG_INT("\tsegment No.", GET_VA_SEG_INDEX(*ptr));
-		LOG_ADDR("\tdestination address -", LONG(pFreeSegment));
 		load_segment_into_memory(pNewRecord, pFreeSegment);
-	}
 
 	return SUCCESS;
 }
@@ -494,10 +587,8 @@ int m_read(VA ptr, void* pBuffer, size_t szBuffer)
 	if (!pRecord->bIsPresent)
 	{
 		LOG("Required segment is not present in memory");
-		Segment* pFreeSegment = find_free_place_for_segment(pRecord->segment.nSize, true);
-		
-		LOG_INT("Loading into memory segment No.", nSegmentIndex);
-		load_segment_into_memory(pRecord, pFreeSegment);
+        
+        load_adjacent_segments_into_memory(nSegmentIndex);
 	}
 
 	LOG_INT("Reading from segment to buffer of size:", szBuffer);
@@ -534,11 +625,9 @@ int m_write(VA ptr, void* pBuffer, size_t szBuffer)
 	// TODO: check size
 	if (!pRecord->bIsPresent)
 	{
-		LOG("Required segment is not present in memory");
-		Segment* pFreeSegment = find_free_place_for_segment(pRecord->segment.nSize, true);
-		
-		LOG_INT("Loading into memory segment No.", nSegmentIndex);
-		load_segment_into_memory(pRecord, pFreeSegment);
+        LOG("Required segment is not present in memory");
+
+        load_adjacent_segments_into_memory(nSegmentIndex);
 	}
 
 	LOG_INT("Writing into segment from buffer of size:", szBuffer);
@@ -577,18 +666,20 @@ int m_init(int n, int szPage)
 	g_pSegTable = (SegmentTable*)g_pStartAddress;
 	const int nTableInitialSize = SEG_TABLE_SIZE(SEG_TABLE_INCREMENT);
 
-	LOG_ADDR("SegmentTable physical address:", LONG(g_pStartAddress));
-	LOG_INT("SegmentTable size (bytes):", nTableInitialSize);
+	LOG_ADDR("Segment table physical address:", LONG(g_pStartAddress));
+	LOG_INT("Segment table initial size (bytes):", nTableInitialSize);
 
 	PA pFirstAvailableAddress = g_pStartAddress + nTableInitialSize;
 	LOG_ADDR("First available physical address:", LONG(pFirstAvailableAddress));
 
-	// init segment table
+    // init segment table
+    // TODO: there is no need to create tmpTable
 	SegmentTable tmpTable;
 	tmpTable.pFirstRecord = (SegmentRecord*)(g_pSegTable + 1);
 	tmpTable.nSize = 0;
 	tmpTable.nReserved = SEG_TABLE_INCREMENT;
-	tmpTable.nFirstAvailableRecord = 0;
+    tmpTable.nFirstAvailableRecord = 0;
+    tmpTable.nForbiddenSegments[0] = tmpTable.nForbiddenSegments[1] = tmpTable.nForbiddenSegments[2] = -1;
 	tmpTable.pSegListHead = initialize_free_segment(pFirstAvailableAddress,
 													nTotalMemory - nTableInitialSize,
 													NULL,
