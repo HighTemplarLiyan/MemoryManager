@@ -83,7 +83,7 @@ typedef struct
 #define SEG_TABLE_SIZE(reserved) (sizeof(SegmentTable) + (sizeof(SegmentRecord) * reserved))
 
 // limits
-#define VAS_SIZE     (1000 * 1024 * 1024) // bytes
+#define VAS_SIZE     (100 * 1024 * 1024) // bytes
 // TODO: add practical limit
 #define MAX_SEGMENTS ((2 << (8*SEG_INDEX_BYTES)) - 1)
 #define MAX_SEG_SIZE ((2L << (8*SEG_OFFSET_BYTES)) - 1)
@@ -431,8 +431,8 @@ VA insert_new_record_into_table(size_t nSegmentSize)
 	SET_VA_SEG_OFFSET(vaNewSegmentAddress, 0L);
 
 	// reserve space for table records if it exceeds
-	if (g_pSegTable->nFirstAvailableRecord >= g_pSegTable->nReserved)
-		increase_table_size();
+    if (g_pSegTable->nFirstAvailableRecord >= g_pSegTable->nReserved)
+        increase_table_size();
 
 	SegmentRecord* pNewRecord = GET_SEG_RECORD(vaNewSegmentAddress);
 
@@ -539,12 +539,19 @@ int m_malloc(VA* ptr, size_t szBlock)
 {
 	LOG_LONG("m_malloc: Initializing memory segment of size:", szBlock);
 
-	if (!ptr || szBlock < MIN_SEG_SIZE || szBlock > g_nMaxSegmentSize)
-		return WRONG_PARAMETERS;
+    if (!ptr || szBlock < MIN_SEG_SIZE || szBlock > g_nMaxSegmentSize)
+    {
+        LOG("m_malloc: ERROR! Wrong parameters");
+        return WRONG_PARAMETERS;
+    }
 
-	g_nCurrentVasSize += szBlock;
-    if (g_nCurrentVasSize > VAS_SIZE || g_pSegTable->nFirstAvailableRecord >= g_nMaxRecords)
-		return NOT_ENOUGH_MEMORY;
+    if (g_nCurrentVasSize + szBlock > VAS_SIZE || g_pSegTable->nFirstAvailableRecord >= g_nMaxRecords)
+    {
+        LOG("m_malloc: ERROR! Not enough memory");
+        return NOT_ENOUGH_MEMORY;
+    }
+        
+    g_nCurrentVasSize += szBlock;
 
 	*ptr = insert_new_record_into_table(szBlock);
 	SegmentRecord* pNewRecord = GET_SEG_RECORD(*ptr);
@@ -556,6 +563,7 @@ int m_malloc(VA* ptr, size_t szBlock)
 	else
 		load_segment_into_memory(pNewRecord, pFreeSegment);
 
+    LOG("m_malloc: Segment successfully initialized");
 	return SUCCESS;
 }
 
@@ -702,18 +710,26 @@ int m_init(int n, int szPage)
     LOG_INT("            ", n);
     LOG_INT("            ", szPage);
 
-	if (n <= 0 || szPage <= 0)
-		return WRONG_PARAMETERS;
+    if (n <= 0 || szPage <= 0)
+    {
+        LOG("m_init: ERROR! Wrong parameters");
+        return WRONG_PARAMETERS;
+    }
 
     const long nTotalMemory = LONG(n) * szPage;
     const int nTableInitialSize = SEG_TABLE_SIZE(SEG_TABLE_INCREMENT);
 
     // limit min size of allocated memory
     if (nTotalMemory < nTableInitialSize + MIN_SEG_SIZE)
+    {
+        LOG("m_init: ERROR! Wrong parameters");
         return WRONG_PARAMETERS;
+    }
     
     // limit max amount of records, otherwise SegmentTable may fill all memory
     g_nMaxRecords = ((nTotalMemory / 3) - sizeof(SegmentTable)) / sizeof(SegmentRecord);
+    if (g_nMaxRecords < SEG_TABLE_INCREMENT)
+        g_nMaxRecords = SEG_TABLE_INCREMENT;
     LOG_INT("Max records:", g_nMaxRecords);
 
     // limit max segment size
@@ -724,8 +740,11 @@ int m_init(int n, int szPage)
 
 	LOG_LONG("Allocating physical memory (bytes):", nTotalMemory);
     g_pStartAddress = malloc(nTotalMemory);
-	if (!g_pStartAddress)
-		return UNKNOWN_ERROR;
+    if (!g_pStartAddress)
+    {
+        LOG("m_init: ERROR! Can not allocate enough memory");
+        return UNKNOWN_ERROR;
+    }
 
 	g_pSegTable = (SegmentTable*)g_pStartAddress;
 
