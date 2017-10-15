@@ -3,6 +3,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 // VAS = Virtual Address Space
 // va = virtual address
+// pa = physical address
 // seg = segment
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -73,9 +74,11 @@ typedef struct
 #define SEG_INDEX_BYTES   2
 #define SEG_OFFSET_BYTES (sizeof(VA) - SEG_INDEX_BYTES)
 
+// used to retrieve segment info from VA
 #define GET_VA_SEG_INDEX(va)          (LONG(va) >> (8 * SEG_OFFSET_BYTES))
 #define GET_VA_SEG_OFFSET(va)         (LONG(va) & ((1L << (8 * SEG_OFFSET_BYTES)) - 1))
 
+// used to set segment info into VA
 #define SET_VA_SEG_INDEX(va, index)   (va = (VA)(GET_VA_SEG_OFFSET(va) | (index << (8 * SEG_OFFSET_BYTES))))
 #define SET_VA_SEG_OFFSET(va, offset) (va = (VA)(((GET_VA_SEG_INDEX(va) << (8 * SEG_OFFSET_BYTES)) | offset)))
 
@@ -100,6 +103,7 @@ PA g_pStartAddress;
 
 size_t g_nCurrentVasSize = 0;
 int g_nMaxRecords;
+size_t g_nMaxSegmentSize;
 
 SegmentTable* g_pSegTable;
 
@@ -474,15 +478,64 @@ VA insert_new_record_into_table(size_t nSegmentSize)
 	return vaNewSegmentAddress;
 }
 
-void log_size()
+///////////////////////////////////////////////////////////////////////////////
+// Log functions
+///////////////////////////////////////////////////////////////////////////////
+
+#ifndef NO_LOG
+
+void log_struct_sizes()
 {
-	LOG_STR("#####################################################");
-	LOG("###### Core structs sizes ######");
+	LOG_STR("######################################################################");
+	LOG("###### Struct sizes ######");
 	LOG_INT("SegmentTable:", sizeof(SegmentTable));
 	LOG_INT("SegmentRecord:", sizeof(SegmentRecord));
 	LOG_INT("Segment:", sizeof(Segment));
-	LOG_STR("#####################################################");
+	LOG_STR("######################################################################");
 }
+
+void log_memory_dump()
+{
+    LOG_STR("**********************************************************************");
+    LOG("****** Memory dump ******");
+
+    LOG("Segment table:");
+    LOG_ADDR("    address:", LONG(g_pSegTable));
+    LOG_INT("    records:", g_pSegTable->nSize);
+    LOG_INT("    reserved:", g_pSegTable->nReserved);
+
+    LOG("Segment records:");
+    SegmentRecord* pRecord;
+    for (int i = 0; i < g_pSegTable->nSize; ++i)
+    {
+        pRecord = GET_SEG_RECORD_NO(i);
+
+        LOG_INT("    record No.", i);
+        LOG_ADDR("        address:", LONG(pRecord));
+        LOG_ADDR("        segment address:", LONG(pRecord->pSegAddress));
+        LOG_INT("        present:", pRecord->bIsPresent);
+        LOG_INT("        available:", pRecord->bIsAvailable);
+    }
+
+    LOG("Segments:");
+    Segment* pSeg = g_pSegTable->pSegListHead;
+    while (pSeg)
+    {
+        if (pSeg->bIsFree)
+            LOG("    Segment (free):");
+        else
+            LOG_INT("    Segment No.", GET_SEG_RECORD_INDEX(RECORD(pSeg)));
+        LOG_ADDR("      address:", LONG(pSeg));
+        LOG_INT("       size:", pSeg->nSize);
+        LOG_INT("       free:", pSeg->bIsFree);
+
+        pSeg = pSeg->pNext;
+    }
+
+    LOG_STR("**********************************************************************");
+}
+
+#endif
 
 ///////////////////////////////////////////////////////////////////////////////
 // Core functions
@@ -492,7 +545,7 @@ int m_malloc(VA* ptr, size_t szBlock)
 {
 	LOG_INT("m_malloc: Initializing memory segment of size:", szBlock);
 
-	if (szBlock < MIN_SEG_SIZE || szBlock > MAX_SEG_SIZE)
+	if (!ptr || szBlock < MIN_SEG_SIZE || szBlock > g_nMaxSegmentSize)
 		return WRONG_PARAMETERS;
 
 	g_nCurrentVasSize += szBlock;
@@ -505,10 +558,7 @@ int m_malloc(VA* ptr, size_t szBlock)
 	Segment* pFreeSegment = find_free_place_for_segment(szBlock, false);
 
 	if (!pFreeSegment)
-	{
-		LOG_INT("Unloading to disk NEW segment No.", GET_VA_SEG_INDEX(*ptr));
 		unload_segment(pNewRecord);
-	}
 	else
 		load_segment_into_memory(pNewRecord, pFreeSegment);
 
@@ -517,16 +567,19 @@ int m_malloc(VA* ptr, size_t szBlock)
 
 int m_free(VA ptr)
 {
+    if (!ptr)
+        return WRONG_PARAMETERS;
+
 	const int nSegmentIndex = GET_VA_SEG_INDEX(ptr);
 	const int nSegmentOffset = GET_VA_SEG_OFFSET(ptr);
 
 	LOG("m_free: Deallocating memory from segment");
-	LOG_ADDR("        VA:", LONG(ptr));
+	LOG_INT("        no.", nSegmentIndex);
 
 	if (nSegmentIndex >= g_pSegTable->nSize || nSegmentIndex < 0)
 		return WRONG_PARAMETERS;
 
-	SegmentRecord* pRecord = GET_SEG_RECORD(ptr);
+	SegmentRecord* pRecord = GET_SEG_RECORD_NO(nSegmentIndex);
 
 	// TODO: ignore non-zero offset?
 	if (nSegmentIndex >= g_pSegTable->nSize ||
@@ -554,7 +607,7 @@ int m_free(VA ptr)
 	if (g_pSegTable->nFirstAvailableRecord > nSegmentIndex)
 		g_pSegTable->nFirstAvailableRecord = nSegmentIndex;
 
-	LOG("m_free: Segment deallocationg successful");
+	LOG("m_free: Segment deallocation successful");
 
 	return SUCCESS;
 }
@@ -565,13 +618,13 @@ int m_read(VA ptr, void* pBuffer, size_t szBuffer)
 	const int nSegmentOffset = GET_VA_SEG_OFFSET(ptr);
 
 	LOG("m_read: Reading from segment");
-	LOG_INT("        segment No.", nSegmentIndex);
+	LOG_INT("        segment no.", nSegmentIndex);
 	LOG_INT("        offset:", nSegmentOffset);
 
-	if (nSegmentIndex  >= g_pSegTable->nSize || nSegmentIndex < 0)
+	if (nSegmentIndex >= g_pSegTable->nSize || nSegmentIndex < 0)
 		return WRONG_PARAMETERS;
 
-	SegmentRecord* pRecord = GET_SEG_RECORD(ptr);
+	SegmentRecord* pRecord = GET_SEG_RECORD_NO(nSegmentIndex);
 
 	if (nSegmentOffset >= pRecord->segment.nSize ||
 		nSegmentOffset < 0 ||
@@ -587,7 +640,7 @@ int m_read(VA ptr, void* pBuffer, size_t szBuffer)
 	if (!pRecord->bIsPresent)
 	{
 		LOG("Required segment is not present in memory");
-        
+
         load_adjacent_segments_into_memory(nSegmentIndex);
 	}
 
@@ -604,13 +657,13 @@ int m_write(VA ptr, void* pBuffer, size_t szBuffer)
 	const int nSegmentOffset = GET_VA_SEG_OFFSET(ptr);
 
 	LOG("m_write: Writing into segment");
-	LOG_INT("        segment No.", nSegmentIndex);
+	LOG_INT("        segment no.", nSegmentIndex);
 	LOG_INT("        offset:", nSegmentOffset);
 
-	if (nSegmentIndex  >= g_pSegTable->nSize || nSegmentIndex < 0)
+	if (nSegmentIndex >= g_pSegTable->nSize || nSegmentIndex < 0)
 		return WRONG_PARAMETERS;
 
-	SegmentRecord* pRecord = GET_SEG_RECORD(ptr);
+	SegmentRecord* pRecord = GET_SEG_RECORD_NO(nSegmentIndex);
 
 	if (nSegmentOffset >= pRecord->segment.nSize ||
 		nSegmentOffset < 0 ||
@@ -642,21 +695,30 @@ int m_init(int n, int szPage)
 	srand(time(NULL));
 
 #ifndef NO_LOG
+    // ensure that log will be written even after program crash
 	const int signals[6] = {SIGINT, SIGILL, SIGABRT, SIGFPE, SIGSEGV, SIGTERM};
 	for (size_t i = 0; i < 6; ++i)
-		assert(signal(signals[i], terminate_logger) != SIG_ERR);
+        assert(signal(signals[i], terminate_logger) != SIG_ERR);
+        
+    log_struct_sizes();
 #endif
 
 	LOG("m_init: Initializing memory manager");
-	log_size();
 
 	if (n <= 0 || szPage <= 0)
 		return WRONG_PARAMETERS;
 
     const long nTotalMemory = n * szPage;
+    
     // limit max amount of records, otherwise SegmentTable may fill all memory
     g_nMaxRecords = ((nTotalMemory / 3) - sizeof(SegmentTable)) / sizeof(SegmentRecord);
     LOG_INT("Max records:", g_nMaxRecords);
+
+    // limit max segment size
+    g_nMaxSegmentSize = nTotalMemory - SEG_TABLE_SIZE(g_nMaxRecords);
+    // if (g_nMaxSegmentSize > MAX_SEG_SIZE)
+    //     g_nMaxSegmentSize = MAX_SEG_SIZE;
+    LOG_INT("Max segment size:", g_nMaxSegmentSize);
 
 	LOG_LONG("Allocating physical memory (bytes):", nTotalMemory);
 	g_pStartAddress = malloc(nTotalMemory);
@@ -673,18 +735,15 @@ int m_init(int n, int szPage)
 	LOG_ADDR("First available physical address:", LONG(pFirstAvailableAddress));
 
     // init segment table
-    // TODO: there is no need to create tmpTable
-	SegmentTable tmpTable;
-	tmpTable.pFirstRecord = (SegmentRecord*)(g_pSegTable + 1);
-	tmpTable.nSize = 0;
-	tmpTable.nReserved = SEG_TABLE_INCREMENT;
-    tmpTable.nFirstAvailableRecord = 0;
-    tmpTable.nForbiddenSegments[0] = tmpTable.nForbiddenSegments[1] = tmpTable.nForbiddenSegments[2] = -1;
-	tmpTable.pSegListHead = initialize_free_segment(pFirstAvailableAddress,
-													nTotalMemory - nTableInitialSize,
-													NULL,
-													NULL);
-	memcpy(VOID(g_pSegTable), VOID(&tmpTable), sizeof(SegmentTable));
+	g_pSegTable->pFirstRecord = RECORD(g_pSegTable + 1);
+	g_pSegTable->nSize = 0;
+	g_pSegTable->nReserved = SEG_TABLE_INCREMENT;
+    g_pSegTable->nFirstAvailableRecord = 0;
+    g_pSegTable->nForbiddenSegments[0] = g_pSegTable->nForbiddenSegments[1] = g_pSegTable->nForbiddenSegments[2] = -1;
+	g_pSegTable->pSegListHead = initialize_free_segment(pFirstAvailableAddress,
+                                                        nTotalMemory - nTableInitialSize,
+                                                        NULL,
+                                                        NULL);
 
 	LOG("m_init: Memory manager initialized successfully");
 
