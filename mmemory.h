@@ -5,7 +5,11 @@
 
  ************************************************************************/
 
-
+#define UNKNOWN_ERROR       1
+#define SUCCESS             0
+#define WRONG_PARAMETERS  (-1)
+#define SEGMENT_VIOLATION (-2)
+#define NOT_ENOUGH_MEMORY (-2)
 
 typedef char* VA;				// Тип описывающий адрес блока 
 
