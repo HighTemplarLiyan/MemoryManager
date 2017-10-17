@@ -83,7 +83,6 @@ typedef struct
 
 // limits
 #define VAS_SIZE     (100 * 1024 * 1024) // bytes
-// TODO: add practical limit
 #define MAX_SEGMENTS ((2 << (8*SEG_INDEX_BYTES)) - 1)
 #define MAX_SEG_SIZE ((2L << (8*SEG_OFFSET_BYTES)) - 1)
 #define MIN_SEG_SIZE (SEG_TABLE_INCREMENT * sizeof(SegmentRecord))
@@ -262,17 +261,16 @@ Segment* find_free_place_for_segment(size_t nSize, bool bForce)
         }
 
         // unload largest segment found
-        if (!pSeg)
+        if (!pLargestSegment)
         {
             LOG("Cannot deallocate enough memory for segment");
             return NULL;
         }
-        
+
         LOG_ADDR("Unloading largest:", LONG(pLargestSegment));
         Segment* pFreeSeg = unload_segment(RECORD(pLargestSegment));
 
         // keep unloading following segments
-        // TODO: consider segments of equal size
         SegmentRecord* pNextRecord;
         while (pFreeSeg->nSize < nSizeWithOffset && pFreeSeg->nSize != nSize && pFreeSeg->pNext)
         {
@@ -288,7 +286,7 @@ Segment* find_free_place_for_segment(size_t nSize, bool bForce)
         // unload previous segments, if memory is still not enough
         while (pFreeSeg->nSize < nSizeWithOffset && pFreeSeg->nSize != nSize && pFreeSeg->pPrev)
         {
-            pNextRecord = RECORD(pFreeSeg->pNext);
+            pNextRecord = RECORD(pFreeSeg->pPrev);
             if (segment_is_forbidden(pNextRecord))
                 break;
             pFreeSeg = unload_segment(pNextRecord);
@@ -594,9 +592,8 @@ int m_malloc(VA* ptr, size_t szBlock)
 
 int m_free(VA ptr)
 {
-    // TODO: offset should be long (6 bytes)
 	const int nSegmentIndex = GET_VA_SEG_INDEX(ptr);
-	const int nSegmentOffset = GET_VA_SEG_OFFSET(ptr);
+	const long nSegmentOffset = GET_VA_SEG_OFFSET(ptr);
 
 	LOG("m_free: Deallocating memory from segment");
 	LOG_INT("        no.", nSegmentIndex);
@@ -643,26 +640,31 @@ int m_free(VA ptr)
 int m_read(VA ptr, void* pBuffer, size_t szBuffer)
 {
 	const int nSegmentIndex = GET_VA_SEG_INDEX(ptr);
-	const int nSegmentOffset = GET_VA_SEG_OFFSET(ptr);
+	const long nSegmentOffset = GET_VA_SEG_OFFSET(ptr);
 
 	LOG("m_read: Reading from segment");
 	LOG_INT("        segment no.", nSegmentIndex);
-	LOG_INT("        offset:", nSegmentOffset);
+	LOG_LONG("        offset:", nSegmentOffset);
 
-	if (nSegmentIndex >= g_pSegTable->nSize || nSegmentIndex < 0)
-		return WRONG_PARAMETERS;
+    if (nSegmentIndex >= g_pSegTable->nSize || nSegmentIndex < 0)
+    {
+        LOG("m_read: ERROR! Wrong segment index");
+        return WRONG_PARAMETERS;
+    }
 
 	SegmentRecord* pRecord = GET_SEG_RECORD_NO(nSegmentIndex);
 
-	if (nSegmentOffset >= pRecord->segment.nSize ||
-		nSegmentOffset < 0 ||
-		pRecord->bIsAvailable ||
-		!pBuffer ||
-		szBuffer <= 0)
-		return WRONG_PARAMETERS;
+    if (pRecord->bIsAvailable || !pBuffer || szBuffer <= 0)
+    {
+        LOG("m_read: ERROR! Wrong parameters");
+        return WRONG_PARAMETERS;
+    }
 
-	if (pRecord->segment.nSize - nSegmentOffset < szBuffer)
-		return SEGMENT_VIOLATION;
+    if (pRecord->segment.nSize - nSegmentOffset < szBuffer)
+    {
+        LOG("m_read: ERROR! Reading outside the segment");
+        return SEGMENT_VIOLATION;
+    }
 
 	// TODO: check size
 	if (!pRecord->bIsPresent)
@@ -670,23 +672,29 @@ int m_read(VA ptr, void* pBuffer, size_t szBuffer)
 		LOG("Required segment is not present in memory");
 
         load_adjacent_segments_into_memory(nSegmentIndex);
-	}
+    }
+    
+    if (!pRecord->bIsPresent)
+    {
+        LOG("m_read: ERROR! Can not load required segment into memory");
+        return UNKNOWN_ERROR;
+    }
 
 	LOG_LONG("Reading from segment to buffer of size:", szBuffer);
 	memcpy(pBuffer, VOID(pRecord->pSegAddress + nSegmentOffset), szBuffer);
 
-	LOG("m_write: Reading successfully finished");
+	LOG("m_read: Reading successfully finished");
 	return SUCCESS;
 }
 
 int m_write(VA ptr, void* pBuffer, size_t szBuffer)
 {
 	const int nSegmentIndex = GET_VA_SEG_INDEX(ptr);
-	const int nSegmentOffset = GET_VA_SEG_OFFSET(ptr);
+	const long nSegmentOffset = GET_VA_SEG_OFFSET(ptr);
 
 	LOG("m_write: Writing into segment");
 	LOG_INT("        segment no.", nSegmentIndex);
-	LOG_INT("        offset:", nSegmentOffset);
+	LOG_LONG("        offset:", nSegmentOffset);
 
     if (nSegmentIndex >= g_pSegTable->nSize || nSegmentIndex < 0)
     {
