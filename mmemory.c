@@ -90,7 +90,7 @@ typedef struct
 // Globals
 ///////////////////////////////////////////////////////////////////////////////
 
-PA g_pStartAddress;
+PA g_pStartAddress = NULL;
 
 size_t g_nCurrentVasSize = 0;
 size_t g_nMaxVasSize;
@@ -135,11 +135,14 @@ Segment* initialize_free_segment(PA pAddress, size_t nSize, Segment* pPrevious, 
     pFreeSegment->bIsFree = true;
     pFreeSegment->pAddress = pAddress;
 
-	// link/merge segments
+	// link segments
     pFreeSegment->pPrev = pPrevious;
+    pFreeSegment->pNext = pNext;
+
 	if (pPrevious)
 	{
         if (pPrevious->bIsFree)
+            // merge with previous free segment
             pFreeSegment = merge_free_segments(pPrevious, pFreeSegment);
 		else
 			pPrevious->pNext = pFreeSegment;
@@ -147,10 +150,10 @@ Segment* initialize_free_segment(PA pAddress, size_t nSize, Segment* pPrevious, 
 	else
         g_pSegTable->pSegListHead = pFreeSegment;
 
-    pFreeSegment->pNext = pNext;
 	if (pNext)
 	{
         if (pNext->bIsFree)
+            // merge with next free segment
             pFreeSegment = merge_free_segments(pFreeSegment, pNext);
 		else
 			pNext->pPrev = pFreeSegment;
@@ -168,7 +171,6 @@ Segment* initialize_free_segment(PA pAddress, size_t nSize, Segment* pPrevious, 
 Segment* unload_segment(SegmentRecord* pRecord)
 {
     LOG_INT("Unloading segment No.", GET_SEG_RECORD_INDEX(pRecord));
-    //LOG_ADDR("  seg record:", LONG(pRecord));
 	Segment* pSegmentToUnload = &pRecord->segment;
 
 	// allocate disk memory for segment
@@ -191,12 +193,12 @@ Segment* unload_segment(SegmentRecord* pRecord)
 	}
 
     // update segment info
-    pSegmentToUnload->pAddress = pDiskMemory;
+    pRecord->segment.pAddress = pDiskMemory;
     pRecord->bIsPresent = false;
     pRecord->segment.pPrev = NULL;
     pRecord->segment.pNext = NULL;
 
-	LOG("Segment successfully unloaded");
+	LOG_ADDR("Segment successfully unloaded with disk memory address:", LONG(pRecord->segment.pAddress));
 
 	return pSegmentToUnload;
 }
@@ -220,10 +222,17 @@ Segment* find_free_place_for_segment(size_t nSize, bool bForce)
     Segment* pSeg = g_pSegTable->pSegListHead;
 	while (pSeg)
 	{
-		LOG("    found segment:");
+        
+        if (pSeg->bIsFree)
+            LOG("    found segment (free):");
+        else
+            LOG_INT("    found segment No.", GET_SEG_RECORD_INDEX(RECORD(pSeg)));
+
 		LOG_ADDR("        address:", LONG(pSeg->pAddress));
 		LOG_LONG("        size:", pSeg->nSize);
-		LOG_INT("        free:", pSeg->bIsFree);
+        LOG_INT("        free:", pSeg->bIsFree);
+        LOG_ADDR("        next:", LONG(pSeg->pNext ? pSeg->pNext->pAddress : NULL));
+        LOG_ADDR("        prev:", LONG(pSeg->pPrev ? pSeg->pPrev->pAddress : NULL));
 
 		if (pSeg->bIsFree && pSeg->nSize >= nSize)
 		{
@@ -316,7 +325,10 @@ bool load_segment_into_memory(SegmentRecord* pRecord, Segment* pFreeSegment)
     LOG_INT("\tsegment No.", GET_SEG_RECORD_INDEX(pRecord));
     LOG_ADDR("\tdestination address:", LONG(pFreeSegment->pAddress));
 
-	Segment* pSegmentToLoad = &pRecord->segment;
+    Segment* pSegmentToLoad = &pRecord->segment;
+
+    PA pSegmentDiskAddress = pSegmentToLoad->pAddress;
+    pSegmentToLoad->pAddress = pFreeSegment->pAddress;
 
 	const size_t nMemoryLeft = pFreeSegment->nSize - pSegmentToLoad->nSize;
 
@@ -342,8 +354,8 @@ bool load_segment_into_memory(SegmentRecord* pRecord, Segment* pFreeSegment)
         LOG("Error! Free segment is too small");
         return false;
     }
-
-	// link previous segment to the new one
+                    
+	// link previous segment to the new one                                                 
     pSegmentToLoad->pPrev = pFreeSegment->pPrev;
 	if (pFreeSegment->pPrev)
 		pFreeSegment->pPrev->pNext = pSegmentToLoad;
@@ -351,15 +363,19 @@ bool load_segment_into_memory(SegmentRecord* pRecord, Segment* pFreeSegment)
 		// set segment list head
 		g_pSegTable->pSegListHead = pSegmentToLoad;
 
-	if (!pRecord->bIsPresent && pRecord->segment.pAddress)
+	if (!pRecord->bIsPresent && pSegmentDiskAddress)
     {
+        LOG("Unloading data to disk memory:");
+        LOG_ADDR("   from", LONG(pSegmentDiskAddress));
+        LOG_ADDR("   to", LONG(pFreeSegment->pAddress));
+        LOG_INT("    size", pSegmentToLoad->nSize);
+
         // copy segment content into memory
-        memcpy(VOID(pFreeSegment->pAddress), VOID(pSegmentToLoad->pAddress), pSegmentToLoad->nSize);
+        memcpy(VOID(pFreeSegment->pAddress), VOID(pSegmentDiskAddress), pSegmentToLoad->nSize);
         // free disk memory
-        free(VOID(pSegmentToLoad->pAddress));
+        free(VOID(pSegmentDiskAddress));
     }
 
-	pSegmentToLoad->pAddress = pFreeSegment->pAddress;
 	pRecord->bIsPresent = true;
     
     free(VOID(pFreeSegment));
