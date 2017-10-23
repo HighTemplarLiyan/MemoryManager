@@ -11,8 +11,11 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
-#include <signal.h>
 #include <assert.h>
+
+#ifndef NO_LOG
+#include <signal.h>
+#endif
 
 #include "mmemory.h"
 #include "logger.h"
@@ -48,7 +51,6 @@ typedef struct
 typedef struct
 {
 	SegmentRecord* pFirstRecord;
-	// TODO: size_t (probably not)
 	int nSize;
 	int nFirstAvailableRecord;
 
@@ -60,8 +62,8 @@ typedef struct
 
 ///////////////////////////////////////////////////////////////////////////////
 
+// explicit casts
 #define LONG(x) ((long)(x))
-#define VOID(x) ((void*)(x))
 #define RECORD(x) ((SegmentRecord*)(x))
 
 // number of bytes in VA reserved for segment index and offset
@@ -117,7 +119,7 @@ Segment* merge_free_segments(Segment* pFirstSegment, Segment* pSecondSegment)
 	if (pSecondSegment->pNext)
         pSecondSegment->pNext->pPrev = pFirstSegment;
         
-    free(VOID(pSecondSegment));
+    free(pSecondSegment);
 
 	return pFirstSegment;
 }
@@ -371,14 +373,14 @@ bool load_segment_into_memory(SegmentRecord* pRecord, Segment* pFreeSegment)
         LOG_INT("    size", pSegmentToLoad->nSize);
 
         // copy segment content into memory
-        memcpy(VOID(pFreeSegment->pAddress), VOID(pSegmentDiskAddress), pSegmentToLoad->nSize);
+        memcpy(pFreeSegment->pAddress, pSegmentDiskAddress, pSegmentToLoad->nSize);
         // free disk memory
-        free(VOID(pSegmentDiskAddress));
+        free(pSegmentDiskAddress);
     }
 
 	pRecord->bIsPresent = true;
     
-    free(VOID(pFreeSegment));
+    free(pFreeSegment);
     
     LOG("Segment has been successfully loaded");
     return true;
@@ -441,7 +443,6 @@ bool insert_new_record_into_table(size_t nSegmentSize)
 
 
 	LOG_INT("Inserted segment memory No.", g_pSegTable->nFirstAvailableRecord);
-	//LOG_ADDR("    is loaded into memory address:", LONG(pNewRecord));
 
 	if (g_pSegTable->nFirstAvailableRecord == g_pSegTable->nSize)
 		g_pSegTable->nSize++;
@@ -670,7 +671,7 @@ int m_read(VA ptr, void* pBuffer, size_t szBuffer)
     }
 
 	LOG_LONG("Reading from segment to buffer of size:", szBuffer);
-	memcpy(pBuffer, VOID(pRecord->segment.pAddress + nSegmentOffset), szBuffer);
+	memcpy(pBuffer, pRecord->segment.pAddress + nSegmentOffset, szBuffer);
 
 	LOG("m_read: Reading successfully finished");
 	return SUCCESS;
@@ -720,7 +721,7 @@ int m_write(VA ptr, void* pBuffer, size_t szBuffer)
     }
 
 	LOG_INT("Writing into segment from buffer of size:", szBuffer);
-	memcpy(VOID(pRecord->segment.pAddress + nSegmentOffset), pBuffer, szBuffer);
+	memcpy(pRecord->segment.pAddress + nSegmentOffset, pBuffer, szBuffer);
 
 	LOG("m_write: Writing successfully finished");
 	return SUCCESS;
@@ -750,7 +751,7 @@ int m_init(int n, int szPage)
     }
 
     const long nTotalMemory = LONG(n) * szPage;
-    const int nTableInitialSize = SEG_TABLE_SIZE(n);
+    const int nSegmentTableSize = SEG_TABLE_SIZE(n);
 
     g_nMaxSegments = n > MAX_SEGMENTS ? MAX_SEGMENTS : n;
     g_nCurrentVasSize = 0;
@@ -771,14 +772,14 @@ int m_init(int n, int szPage)
         return UNKNOWN_ERROR;
     }
 
-    g_pSegTable = (SegmentTable*)malloc(nTableInitialSize);
+    g_pSegTable = (SegmentTable*)malloc(nSegmentTableSize);
     if (!g_pSegTable)
     {
         LOG("m_init: ERROR! Can not allocate memory for segment table");
         return UNKNOWN_ERROR;
     }
     LOG_ADDR("Segment table address:", LONG(g_pSegTable));
-    LOG_INT("Segment table initial size (bytes):", nTableInitialSize);
+    LOG_INT("Segment table initial size (bytes):", nSegmentTableSize);
 
     // init segment table
 	g_pSegTable->pFirstRecord = RECORD(g_pSegTable + 1);
