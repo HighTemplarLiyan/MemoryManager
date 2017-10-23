@@ -7,6 +7,7 @@
 // seg = segment
 ///////////////////////////////////////////////////////////////////////////////
 
+#define NO_LOG
 
 #include <stdlib.h>
 #include <stdbool.h>
@@ -84,7 +85,7 @@ typedef struct
 #define SEG_TABLE_SIZE(records) (sizeof(SegmentTable) + (sizeof(SegmentRecord) * records))
 
 // limits
-#define VAS_SIZE_MULTIPLIER 5
+#define VAS_SIZE_MULTIPLIER 100
 #define MAX_SEGMENTS ((2 << (8*SEG_INDEX_BYTES)) - 1)
 #define MAX_SEG_SIZE ((2L << (8*SEG_OFFSET_BYTES)) - 1)
 
@@ -105,6 +106,61 @@ SegmentTable* g_pSegTable;
 #define GET_SEG_RECORD(va)           (g_pSegTable->pFirstRecord + GET_VA_SEG_INDEX(va))
 #define GET_SEG_RECORD_NO(i)         (g_pSegTable->pFirstRecord + i)
 #define GET_SEG_RECORD_INDEX(record) ((LONG(record) - LONG(g_pSegTable)) / sizeof(SegmentRecord))
+
+///////////////////////////////////////////////////////////////////////////////
+// Test functions
+///////////////////////////////////////////////////////////////////////////////
+
+long calculate_average_seg_size_difference()
+{
+    long nAverageSizeDifference = 0;
+    long nTotalSizeDifference = 0;
+    int nSegmentPairs = 0;
+
+    for (int i = 0; i < g_pSegTable->nSize; ++i)
+    {
+        SegmentRecord* pFirstRecord = GET_SEG_RECORD_NO(i);
+        if (pFirstRecord->bIsAvailable)
+            continue;
+
+        for (int j = 0; j < g_pSegTable->nSize; ++j)
+        {
+            SegmentRecord* pSecondRecord = GET_SEG_RECORD_NO(j);
+            if (pSecondRecord->bIsAvailable || i == j)
+                continue;
+
+            ++nSegmentPairs;
+
+            const int nSizeDifference = abs(pSecondRecord->segment.nSize - pFirstRecord->segment.nSize);
+            nTotalSizeDifference += nSizeDifference;
+        }
+    }
+
+    nAverageSizeDifference = nTotalSizeDifference / nSegmentPairs;
+    return nAverageSizeDifference;
+}
+
+double calculate_fragmentation()
+{
+    long nTotalFreeMemory = 0;
+    int nMaxFreeSegmentSize = 0;
+
+    Segment* pSeg = g_pSegTable->pSegListHead;
+
+    while (pSeg)
+    {
+        if (pSeg->bIsFree)
+        {
+            nTotalFreeMemory += pSeg->nSize;
+
+            if (pSeg->nSize > nMaxFreeSegmentSize)
+                nMaxFreeSegmentSize = pSeg->nSize;
+        }
+        pSeg = pSeg->pNext;
+    }
+
+    return 1.0L - (double)nMaxFreeSegmentSize / (double)nTotalFreeMemory;
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -794,4 +850,33 @@ int m_init(int n, int szPage)
 	LOG("m_init: Memory manager initialized successfully");
 
 	return SUCCESS;
+}
+
+void m_terminate()
+{
+    if (g_pStartAddress)
+    {
+        // free free segments
+        Segment* pSeg = g_pSegTable->pSegListHead;
+        while (pSeg)
+        {
+            Segment* pSegToFree = pSeg;
+            pSeg = pSeg->pNext;
+            
+            if (pSegToFree->bIsFree)
+                free(pSegToFree);
+        }
+
+        // free unloaded segments
+        for (int i = 0; i < g_pSegTable->nSize; ++i)
+        {
+            SegmentRecord* pRecord = GET_SEG_RECORD_NO(i);
+            if (!pRecord->bIsPresent)
+                free(pRecord->segment.pAddress);
+        }
+
+        free(g_pSegTable);
+        free(g_pStartAddress);
+        g_pStartAddress = NULL;
+    }
 }

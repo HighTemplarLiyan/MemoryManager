@@ -14,6 +14,8 @@
 typedef char* VA;				// Тип описывающий адрес блока 
 
 
+long calculate_average_seg_size_difference();
+double calculate_fragmentation();
 
 /**
  	@func	_malloc	
@@ -98,3 +100,5 @@ int m_write (VA ptr, void* pBuffer, size_t szBuffer);
 	@retval	1	неизвестная ошибка
  **/
 int m_init (int n, int szPage);
+
+void m_terminate();
